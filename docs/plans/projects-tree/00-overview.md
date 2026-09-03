@@ -64,7 +64,9 @@ type Condition =
   | { kind: 'inRoot'; rootId: string }
   | { kind: 'all' | 'any' | 'not'; of: Condition[] }
 
-interface Rule { id: string; title?: string; when: Condition; then: PartialVerdict; enabled?: boolean }
+interface Rule { id: string; title?: string; when: Condition; verdict: PartialVerdict; enabled?: boolean }
+// в пользовательском файле правил ключ называется `then`; маппинг делает загрузчик (02-B).
+// Внутри он `verdict`: объект с полем `then` — thenable, и `await` над одним правилом сломается.
 ```
 
 **First-match применяется к каждому полю вердикта независимо.** Поля: `skip`, `stopDescend`,

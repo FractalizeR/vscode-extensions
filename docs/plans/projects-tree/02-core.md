@@ -17,6 +17,12 @@
 Файлы: `src/projects/classification/{condition.ts,rule.ts,verdict.ts,highlight.ts,classifier.ts,index.ts}`.
 
 ```ts
+interface DirEntry {                  // живёт здесь, а не в discovery: им владеет NodeFacts,
+  name: string                        // а обратная зависимость classification -> discovery запрещена
+  type: 'file' | 'dir' | 'symlink' | 'other'
+  symlinkTarget?: { type: 'file' | 'dir' | 'broken'; deviceAndInode?: string }
+}
+
 interface NodeFacts {
   rootId: string
   absolutePath: string
@@ -52,7 +58,18 @@ interface FieldVerdict<T> { value: T; byRule: string | undefined }
 - `tags` — не оформление: он попадает в `contextValue` и влияет на состав контекстного меню
   (этап 04). В ревизии 2 он лежал в «оформлении», из-за чего изменение внешнего вида молча меняло
   меню;
-- `rootId` в фактах: без него правило нельзя ограничить корнем, а `pathMatches` не имеет якоря;
+- `rootId` в фактах: без него правило нельзя ограничить корнем, а `pathMatches` не имеет якоря.
+  `anchor: 'root'` — дефолт, `'absolute'` — для правил, привязанных к месту на диске; `pathEquals`
+  якоря не имеет и всегда сравнивается с `pathFromRoot` — иначе два условия о пути вели бы себя
+  по-разному без причины. Условие `inRoot` опирается на тот же `rootId`;
+- **поле вердикта в правиле называется `verdict`, а не `then`.** В пользовательском файле правил
+  ключ остаётся `then` (в JSON `when`/`then` читается естественно), маппинг делает загрузчик (02-B).
+  Причина переименования во внутреннем типе: объект с полем `then` — настоящий thenable, и любой
+  `await` над одиночным правилом развернёт его как промис, вызвав `then(resolve, reject)`. Массив
+  правил безопасен, одно правило — нет, а искать такой баг тяжело;
+- **семантика `**` в `pathMatches` — ноль или более сегментов**, как в minimatch и `.gitignore`:
+  `libs/**/src` матчит и `libs/src`, и `libs/foo/src`. Правила пишет человек, и расхождение с
+  привычным glob он отлаживал бы вслепую;
 - **проверка сложности регулярки при валидации** вместо бюджета времени. Синхронный `RegExp` в
   Node прервать нечем — ни таймером, ни токеном отмены; «бюджет времени» ревизии 2 был невыполним.
   Валидация отвергает вложенные кванторы и обратные ссылки — конструкции, дающие катастрофический
@@ -140,13 +157,9 @@ DoD: отменённый обход прекращает читать ФС (п�
 
 Файлы: `src/projects/discovery/{walker.ts,fileSystem.ts,tree.ts,index.ts}`.
 
-```ts
-interface DirEntry {
-  name: string
-  type: 'file' | 'dir' | 'symlink' | 'other'
-  symlinkTarget?: { type: 'file' | 'dir' | 'broken'; deviceAndInode?: string }
-}
+`DirEntry` объявлен в `classification/` (см. 02-A) — discovery его импортирует, а не переобъявляет.
 
+```ts
 interface FileSystemReader {
   readDirectory(path: string): Promise<ReadonlyArray<DirEntry>>
   readFile(path: string, maxBytes: number): Promise<string>   // нужен для .gitmodules
@@ -227,7 +240,15 @@ type ActionSpec =
   | { kind: 'command'; commandId: string; args?: readonly unknown[] }
 
 type RenderTarget = { kind: 'shell'; shell: ShellKind } | { kind: 'uri' } | { kind: 'literal' }
-function render(template: string, node: ClassifiedNode, target: RenderTarget): string
+function render(template: string, node: ActionRenderNode, target: RenderTarget): string
+
+// ActionRenderNode — узкий вход рендера: path, name, parentPath, rootPath, workspaceFile?.
+// Ровно то, что нужно пяти подстановкам. Зависимость от полного ClassifiedNode здесь не нужна и
+// связала бы модель действий с обходом; сведение — однострочный адаптер на стороне потребителя.
+
+// Для cmd двойная кавычка в подставляемом значении ОТВЕРГАЕТСЯ, а не квотируется: escape для `"`
+// внутри кавычек в cmd отсутствует, кавычки там переключают режим для всей строки, и любой обход
+// зависит от соседних символов (на этом же классе ошибок был CVE-2024-27980 в Node.js).
 ```
 
 - **квотируется каждое подставляемое значение в момент подстановки**, а не готовая строка.
