@@ -6,6 +6,7 @@ import {
 } from '../../projects/discovery/index.js';
 import type { Rule } from '../../projects/classification/index.js';
 import type { ConfiguredRoot, ShowRootNodes } from '../configuration/index.js';
+import type { HighlightDecorationProvider } from '../decorations/index.js';
 import { toTreeItem } from './item.js';
 import { sortChildren } from './sort.js';
 import type { NodeRegistry, RootGroupRegistry } from './registry.js';
@@ -42,10 +43,17 @@ export class ProjectsTreeProvider
     private readonly rules: readonly Rule[],
     private readonly nodeRegistry: NodeRegistry,
     private readonly groupRegistry: RootGroupRegistry,
+    // `key` is whatever `treeElementKey` (`./expansion.js`) produces for the element being built.
+    private readonly isExpanded: (key: string) => boolean,
+    // Optional: this class works without a decoration carrier (every existing test constructs it
+    // without one). When given, every `refresh()` feeds it the freshly built top level so
+    // `FileDecoration`s stay in sync without a second call site the way an unwired feature would
+    // (docs/plans/projects-tree/review-05/REPORT.md, M5).
+    private readonly decorations?: Pick<HighlightDecorationProvider, 'update'>,
   ) {}
 
   getTreeItem(element: TreeElement): vscode.TreeItem {
-    return toTreeItem(element);
+    return toTreeItem(element, this.isExpanded);
   }
 
   getChildren(element?: TreeElement): TreeElement[] {
@@ -57,6 +65,7 @@ export class ProjectsTreeProvider
     const roots = this.listRoots();
     if (roots.length === 0) {
       this.#topLevel = [];
+      this.decorations?.update(this.#topLevel);
       this.#emitter.fire(undefined);
       return;
     }
@@ -69,6 +78,7 @@ export class ProjectsTreeProvider
       this.getShowRootNodes(),
       this.groupRegistry,
     );
+    this.decorations?.update(this.#topLevel);
     this.#emitter.fire(undefined);
   }
 

@@ -13,5 +13,6 @@
   "configuration.location.description": "Where the projects tree is shown.",
   "configuration.location.enum.activityBar": "Its own container in the Activity Bar.",
   "configuration.location.enum.explorer": "A view inside the Explorer, next to the file tree.",
-  "configuration.location.enum.none": "Nowhere — no tree; use the command to pick a project instead."
+  "configuration.location.enum.none": "Nowhere — no tree; use the command to pick a project instead.",
+  "color.highlight.description": "Color of a node a rule marked as highlighted."
 }

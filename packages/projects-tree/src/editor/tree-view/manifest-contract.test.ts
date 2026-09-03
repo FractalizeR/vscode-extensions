@@ -16,9 +16,16 @@ interface ViewContribution {
   readonly when?: string;
 }
 
+interface ColorContribution {
+  readonly id: string;
+  readonly description: string;
+  readonly defaults: Record<string, string>;
+}
+
 interface Manifest {
   readonly activationEvents: readonly string[];
   readonly contributes: {
+    readonly colors: readonly ColorContribution[];
     readonly views: Record<string, readonly ViewContribution[]>;
     readonly viewsWelcome: readonly { readonly view: string }[];
     readonly menus: Record<string, readonly { readonly when: string }[]>;
@@ -32,6 +39,8 @@ const manifestPath = nodePath.join(
 );
 const manifest = JSON.parse(nodeFs.readFileSync(manifestPath, 'utf8')) as Manifest;
 const declaredViews = Object.values(manifest.contributes.views).flat();
+const nlsPath = nodePath.join(nodePath.dirname(manifestPath), 'package.nls.json');
+const nls = JSON.parse(nodeFs.readFileSync(nlsPath, 'utf8')) as Record<string, string>;
 
 const byName = (a: string, b: string): number => a.localeCompare(b);
 
@@ -114,5 +123,35 @@ describe('package.json view contributions', () => {
     expect(manifest.contributes.views.projectsTree?.map((view) => view.id)).toEqual([
       ACTIVITY_BAR_VIEW_ID,
     ]);
+  });
+});
+
+describe('package.json color contributions', () => {
+  /**
+  A `defaults` map missing a theme kind leaves the color undefined there, and a node highlighted
+  by that id simply renders unstyled — visible only to someone running that specific theme, which
+  is why the plan's DoD says to check light and dark by hand. Asserting all four here is what makes
+  that manual check a formality rather than the only line of defence.
+  */
+  it('defines every contributed color for all four theme kinds', () => {
+    expect(manifest.contributes.colors.length).toBeGreaterThan(0);
+    for (const color of manifest.contributes.colors) {
+      const themeKinds = Object.keys(color.defaults);
+      themeKinds.sort(byName);
+      expect(themeKinds, color.id).toEqual(['dark', 'highContrast', 'highContrastLight', 'light']);
+    }
+  });
+
+  /**
+  An unresolved `%key%` is not an error to VS Code — it renders the literal `%key%` to the user in
+  the settings UI. Nothing else in the suite reads the manifest's `%…%` references, so a typo here
+  would ship.
+  */
+  it('points every color description at an NLS key that exists', () => {
+    for (const color of manifest.contributes.colors) {
+      const reference = /^%(?<key>.+)%$/.exec(color.description)?.groups?.key;
+      expect(reference, `${color.id} description is not an NLS reference`).toBeDefined();
+      expect(Object.keys(nls), color.id).toContain(reference);
+    }
   });
 });

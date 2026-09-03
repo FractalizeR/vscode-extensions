@@ -13,5 +13,6 @@
   "configuration.location.description": "Где показывается дерево проектов.",
   "configuration.location.enum.activityBar": "Собственный контейнер на панели действий (Activity Bar).",
   "configuration.location.enum.explorer": "Представление внутри Проводника (Explorer), рядом с деревом файлов.",
-  "configuration.location.enum.none": "Нигде — дерева нет; вместо него используйте команду выбора проекта."
+  "configuration.location.enum.none": "Нигде — дерева нет; вместо него используйте команду выбора проекта.",
+  "color.highlight.description": "Цвет узла, выделенного правилом."
 }

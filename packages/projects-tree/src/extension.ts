@@ -13,6 +13,7 @@ import {
   readShowRootNodes,
 } from './editor/configuration/index.js';
 import { setHasRoots, setLocationContextKeys } from './editor/context-keys.js';
+import { HighlightDecorationProvider } from './editor/decorations/index.js';
 import {
   ALL_VIEW_IDS,
   ExpansionStore,
@@ -27,6 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const nodeRegistry = new NodeRegistry();
   const groupRegistry = new RootGroupRegistry();
   const expansion = new ExpansionStore(context.globalState);
+  const decorations = new HighlightDecorationProvider();
   const provider = new ProjectsTreeProvider(
     () => readRoots().roots,
     readShowRootNodes,
@@ -34,6 +36,8 @@ export function activate(context: vscode.ExtensionContext): void {
     DEFAULT_RULES,
     nodeRegistry,
     groupRegistry,
+    (key) => expansion.isExpanded(key),
+    decorations,
   );
 
   const refreshFromSettings = async (): Promise<void> => {
@@ -56,6 +60,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     provider,
+    decorations,
+    // Registered before the first refresh so the initial tree is decorated too. The provider is
+    // global (api-facts.md, fact 8): these decorations also appear in the Explorer, and the user
+    // can switch them off entirely via `explorer.decorations.colors`/`.badges` (fact 28) — which
+    // is why highlighting never relies on this carrier alone.
+    vscode.window.registerFileDecorationProvider(decorations),
     // `createTreeView`, not `registerTreeDataProvider`: only a `TreeView` exposes
     // `onDidExpandElement`/`onDidCollapseElement` (api-facts.md, facts 39, 40), and without those
     // the expansion store has nothing to record. Registered on both view ids unconditionally —
