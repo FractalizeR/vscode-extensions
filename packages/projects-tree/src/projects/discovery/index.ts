@@ -17,3 +17,13 @@ export type {
   WalkDiagnostic,
   WalkDiagnosticKind,
 } from './tree.js';
+export { childrenOfProject } from './descend.js';
+export type {
+  DescendContext,
+  DescendDiagnostic,
+  DescendDiagnosticKind,
+  DescendResult,
+  DescendStrategy,
+} from './descend.js';
+export { parseGitmodules, GitmodulesParseError } from './gitmodules.js';
+export type { GitmoduleEntry } from './gitmodules.js';

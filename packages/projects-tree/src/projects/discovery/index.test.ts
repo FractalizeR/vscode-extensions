@@ -2,19 +2,28 @@ import { describe, expect, it } from 'vitest';
 import {
   CancellationError,
   CancellationSource,
+  childrenOfProject,
   createNodeFileSystemReader,
   discoverProjectTree,
   FileSystemError,
   GenerationTracker,
+  GitmodulesParseError,
+  parseGitmodules,
   type CancellationSignal,
   type ClassifiedNode,
   type CommitOutcome,
+  type DescendContext,
+  type DescendDiagnostic,
+  type DescendDiagnosticKind,
+  type DescendResult,
+  type DescendStrategy,
   type DiscoverOptions,
   type DiscoverResult,
   type DiscoveryRoot,
   type FileSystemErrorCode,
   type FileSystemReader,
   type Generation,
+  type GitmoduleEntry,
   type WalkDiagnostic,
   type WalkDiagnosticKind,
 } from './index.js';
@@ -74,5 +83,104 @@ describe('discovery/index — public surface', () => {
     expect(nodes).toEqual([]);
     const kind: WalkDiagnosticKind | undefined = diagnostics[0]?.kind;
     expect(kind).toBe('notFound');
+  });
+
+  it('exposes parseGitmodules/GitmoduleEntry and GitmodulesParseError for the submodules strategy', () => {
+    const entries: readonly GitmoduleEntry[] = parseGitmodules('[submodule "lib"]\n\tpath = lib\n');
+    expect(entries).toEqual([{ name: 'lib', path: 'lib' }]);
+    expect(() => parseGitmodules('[submodule]\n')).toThrow(GitmodulesParseError);
+  });
+
+  it('exposes childrenOfProject/DescendStrategy/DescendContext/DescendResult, both strategies', async () => {
+    const projectNode: ClassifiedNode = {
+      facts: {
+        rootId: 'r',
+        absolutePath: '/work/project',
+        pathFromRoot: '',
+        name: 'project',
+        depthFromRoot: 0,
+        entries: [],
+      },
+      verdict: {
+        skip: { value: false, byRule: undefined },
+        stopDescend: { value: false, byRule: undefined },
+        project: { value: true, byRule: undefined },
+        primaryAction: { value: undefined, byRule: undefined },
+        highlight: { value: undefined, byRule: undefined },
+        tags: { value: [], byRule: undefined },
+      },
+      children: [],
+    };
+    const fakeFs: FileSystemReader = {
+      readDirectory: () => Promise.reject(new Error('unused')),
+      readFile: (path) =>
+        path === '/work/project/.gitmodules'
+          ? Promise.resolve('[submodule "lib"]\n\tpath = lib\n')
+          : Promise.reject(new FileSystemError('notFound', `no such path: ${path}`)),
+      identity: (path) =>
+        path === '/work/project/lib'
+          ? Promise.resolve('id-lib')
+          : Promise.reject(new FileSystemError('notFound', `no such path: ${path}`)),
+    };
+    const context: DescendContext = {
+      fs: fakeFs,
+      rules: [],
+      signal: new CancellationSource().signal,
+      maxDepth: 4,
+    };
+
+    const stopStrategy: DescendStrategy = 'stop';
+    const stopResult: DescendResult = await childrenOfProject(projectNode, stopStrategy, context);
+    expect(stopResult).toEqual({ children: [], diagnostics: [] });
+
+    const submodulesStrategy: DescendStrategy = 'submodules';
+    const submodulesResult: DescendResult = await childrenOfProject(
+      projectNode,
+      submodulesStrategy,
+      context,
+    );
+    expect(submodulesResult.diagnostics).toEqual([]);
+    expect(submodulesResult.children).toHaveLength(1);
+    expect(submodulesResult.children.at(0)?.facts.name).toBe('lib');
+  });
+
+  it('reports a gitmodulesParseError DescendDiagnostic for a malformed .gitmodules, without throwing', async () => {
+    const projectNode: ClassifiedNode = {
+      facts: {
+        rootId: 'r',
+        absolutePath: '/work/broken-project',
+        pathFromRoot: '',
+        name: 'broken-project',
+        depthFromRoot: 0,
+        entries: [],
+      },
+      verdict: {
+        skip: { value: false, byRule: undefined },
+        stopDescend: { value: false, byRule: undefined },
+        project: { value: true, byRule: undefined },
+        primaryAction: { value: undefined, byRule: undefined },
+        highlight: { value: undefined, byRule: undefined },
+        tags: { value: [], byRule: undefined },
+      },
+      children: [],
+    };
+    const fakeFs: FileSystemReader = {
+      readDirectory: () => Promise.reject(new Error('unused')),
+      readFile: () => Promise.resolve('[submodule]\n'), // no quoted name — malformed
+      identity: () => Promise.reject(new Error('unused')),
+    };
+    const context: DescendContext = {
+      fs: fakeFs,
+      rules: [],
+      signal: new CancellationSource().signal,
+      maxDepth: 4,
+    };
+
+    const result: DescendResult = await childrenOfProject(projectNode, 'submodules', context);
+
+    expect(result.children).toEqual([]);
+    const diagnostics: readonly DescendDiagnostic[] = result.diagnostics;
+    const kind: DescendDiagnosticKind | undefined = diagnostics[0]?.kind;
+    expect(kind).toBe('gitmodulesParseError');
   });
 });
