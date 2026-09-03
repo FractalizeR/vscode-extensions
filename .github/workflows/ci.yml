@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  # Only the default branch: a feature branch push is already covered by the
+  # pull_request trigger below, so including it here would run the full check
+  # twice per commit (push + pull_request) for the duration the PR is open.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run checks
+        run: pnpm check
+
+      - name: Package projects-tree
+        run: pnpm --filter projects-tree package
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: projects-tree-vsix
+          path: packages/projects-tree/*.vsix
+          if-no-files-found: error
