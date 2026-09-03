@@ -1,0 +1,14 @@
+.vscode/**
+.vscode-test/**
+.gitignore
+node_modules/**
+out/**
+src/**
+webview/**
+esbuild.mjs
+tsconfig.json
+tsconfig.*.json
+**/*.ts
+**/*.map
+*.vsix
+pnpm-lock.yaml
