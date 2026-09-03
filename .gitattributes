@@ -1,0 +1,13 @@
+# Normalize line endings for text files; let Git decide what counts as text.
+* text=auto
+
+# CLAUDE.md is a symlink to AGENTS.md (mode 120000). Exclude it from any
+# line-ending conversion: on checkout without core.symlinks=true it
+# materializes as a plain text file containing the target path, and that
+# content must not be touched by eol filters.
+CLAUDE.md -text
+
+# Packaged/binary assets: never diff, merge, or convert line endings.
+*.vsix binary
+*.png binary
+*.ico binary
