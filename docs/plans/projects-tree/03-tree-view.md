@@ -9,7 +9,7 @@
 
 ## Пакет 03-A. TreeDataProvider и реестр узлов
 
-Файлы: `src/editor/treeView/{provider.ts,item.ts,registry.ts,index.ts}`, вклады `views` и
+Файлы: `src/editor/tree-view/{provider.ts,item.ts,registry.ts,index.ts}`, вклады `views` и
 `viewsContainers` в `package.json`, `media/activity-icon.svg`.
 
 ```ts
@@ -87,7 +87,7 @@ DoD: правило `{ when: { kind: 'depth', max: 1 }, then: { highlight: … }
 
 ## Пакет 03-C. Размещение
 
-Файлы: `package.json` (два объявления view с разными id + `when`), `src/editor/treeView/location.ts`,
+Файлы: `package.json` (два объявления view с разными id + `when`), `src/editor/tree-view/location.ts`,
 `src/editor/contextKeys.ts`.
 
 Три режима настройки `projectsTree.location`:

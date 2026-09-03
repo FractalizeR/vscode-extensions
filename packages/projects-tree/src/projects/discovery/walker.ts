@@ -79,9 +79,10 @@ export interface WalkRootParams {
 
 export interface WalkRootResult {
   /**
-  `undefined` when the root itself could not be read or was classified `skip`.
+  The root's own children — never the root itself (see `walkRoot`'s doc comment). Empty when the
+  root could not be read, has no directory children, or `maxDepth` is 0.
   */
-  readonly node: ClassifiedNode | undefined;
+  readonly nodes: readonly ClassifiedNode[];
   readonly diagnostics: readonly WalkDiagnostic[];
 }
 
@@ -111,28 +112,22 @@ export async function walkRoot(params: WalkRootParams): Promise<WalkRootResult> 
     depthFromRoot: 0,
   };
 
-  // The root is always read directly, bypassing the needsEntries() optimization below: a
+  // The root itself is never classified and never becomes a `ClassifiedNode`: it is a container
+  // the walk starts from (a folder configured to hold projects), not a project candidate — a
+  // marker directly under it (e.g. `.idea`) must not make the root a `project`/`stopDescend` leaf
+  // and collapse the whole tree into one node. `maxDepth` is still counted from the root (0 =
+  // nothing, since the root itself is never returned; 1 = the root's own children, unexpanded).
+  // The root is still read directly, bypassing the needsEntries() optimization below: a
   // caller-specified root that does not exist, is a file, or is unreadable must be reported
   // regardless of maxDepth or which rules happen to be loaded.
   const rootRead = await readDirectoryTracked(rootToExpand.absolutePath);
   if (isDiagnostic(rootRead)) {
     diagnostics.push(rootRead.diagnostic);
-    return { node: undefined, diagnostics };
+    return { nodes: [], diagnostics };
   }
-  const rootFacts: NodeFacts = { ...rootToExpand, entries: rootRead };
-  const rootVerdict = classifier.classify(rootFacts);
-  if (rootVerdict.skip.value) {
-    return { node: undefined, diagnostics };
-  }
-  const rootChildren =
-    0 < maxDepth && !rootVerdict.stopDescend.value
-      ? await expandChildren(rootToExpand, rootRead, 1)
-      : [];
+  const nodes = 0 < maxDepth ? await expandChildren(rootToExpand, rootRead, 1) : [];
 
-  return {
-    node: { facts: rootFacts, verdict: rootVerdict, children: rootChildren, entriesRead: true },
-    diagnostics,
-  };
+  return { nodes, diagnostics };
 
   async function readDirectoryTracked(path: string): Promise<ReadOutcome> {
     if (followSymlinks) {

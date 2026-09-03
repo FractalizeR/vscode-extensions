@@ -16,6 +16,8 @@ const ALLOWLIST: readonly string[] = [
   'l10n/bundle.l10n.json',
   'dist/extension.js',
   'schemas/rules.schema.json',
+  'package.nls.json',
+  'media/activity-icon.svg',
 ];
 
 function sortedCopy(values: readonly string[]): string[] {

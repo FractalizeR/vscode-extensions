@@ -29,14 +29,106 @@
       "description": "The core walks the filesystem through node:fs and cannot operate over vscode-vfs:// virtual filesystems."
     }
   },
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:projectsTree.view"
+  ],
   "contributes": {
     "jsonValidation": [
       {
         "fileMatch": "projects-tree.rules.json",
         "url": "./schemas/rules.schema.json"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "projectsTree",
+          "title": "%viewsContainer.projectsTree.title%",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "projectsTree": [
+        {
+          "id": "projectsTree.view",
+          "name": "%view.projectsTree.name%"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "projectsTree.view",
+        "contents": "%viewsWelcome.noRoots%",
+        "when": "!projectsTree.hasRoots"
+      }
+    ],
+    "commands": [
+      {
+        "command": "projectsTree.refresh",
+        "title": "%command.refresh.title%",
+        "category": "%configuration.title%",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectsTree.refresh",
+          "when": "view == projectsTree.view",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "projectsTree.roots": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "%configuration.roots.description%"
+        },
+        "projectsTree.showRootNodes": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "%configuration.showRootNodes.enum.auto%",
+            "%configuration.showRootNodes.enum.always%",
+            "%configuration.showRootNodes.enum.never%"
+          ],
+          "default": "auto",
+          "scope": "window",
+          "description": "%configuration.showRootNodes.description%"
+        }
+      }
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

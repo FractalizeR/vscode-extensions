@@ -342,6 +342,85 @@ describe('discoverProjectTree — traversal of a test tree', () => {
   });
 });
 
+describe('discoverProjectTree — the root itself is never classified or a node', () => {
+  it('a root carrying a project marker (e.g. .idea) still yields its children, not one collapsed node', async () => {
+    /**
+     * Regression: run against a real user's ~/PhpstormProjects, whose root directory itself
+     * contains `.idea` (PhpStorm keeps its own project container there). The default repo-marker
+     * rule classified the *root* as a project with `stopDescend: true`, collapsing the whole
+     * walk into a single node (total=1, rootChildren=0). The root must never be classified —
+     * only its children are — so a marker directly under the root must not affect the root at
+     * all, and each real project below it must still be found and classified independently.
+     */
+    const projectA = dir({ '.git': dir() });
+    const projectB = dir({ '.git': dir() });
+    const testRoot = dir({ '.idea': dir(), 'project-a': projectA, 'project-b': projectB });
+    const fs = new FakeFileSystem(testRoot);
+    const rules: Rule[] = [
+      {
+        id: 'repo-marker',
+        when: { kind: 'hasChild', names: ['.idea', '.git'] },
+        verdict: { project: true, stopDescend: true },
+      },
+    ];
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '' }],
+      rules,
+      fs,
+      new CancellationSource().signal,
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.nodes).toHaveLength(3);
+    const paths = result.nodes.map((node) => node.facts.pathFromRoot);
+    expect(paths).toEqual(expect.arrayContaining(['.idea', 'project-a', 'project-b']));
+    expect(result.nodes.some((node) => node.facts.pathFromRoot === '')).toBe(false);
+    const projectANode = findByPath(result.nodes, 'project-a');
+    const projectBNode = findByPath(result.nodes, 'project-b');
+    expect(projectANode?.verdict.project).toEqual({ value: true, byRule: 'repo-marker' });
+    expect(projectBNode?.verdict.project).toEqual({ value: true, byRule: 'repo-marker' });
+  });
+
+  it('maxDepth 1 returns only the root’s children — depthFromRoot for them is 1, not 0', async () => {
+    // Decision (docs/plans/projects-tree review): the root is never a node, but its children's
+    // depthFromRoot stays 1 (not renumbered to 0), so a rule like { kind: 'depth', max: 1 }
+    // continues to mean "the root's immediate children" both before and after this change.
+    const grandchild = dir();
+    const child = dir({ grandchild });
+    const testRoot = dir({ child });
+    const fs = new FakeFileSystem(testRoot);
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '' }],
+      [],
+      fs,
+      new CancellationSource().signal,
+      { maxDepth: 1 },
+    );
+
+    expect(result.nodes).toHaveLength(1);
+    expect(result.nodes[0]?.facts.pathFromRoot).toBe('child');
+    expect(result.nodes[0]?.facts.depthFromRoot).toBe(1);
+    expect(result.nodes[0]?.children).toEqual([]);
+  });
+
+  it('maxDepth 0 yields an empty tree, since depth is counted from the root and the root is never returned', async () => {
+    const testRoot = dir({ child: dir() });
+    const fs = new FakeFileSystem(testRoot);
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '' }],
+      [],
+      fs,
+      new CancellationSource().signal,
+      { maxDepth: 0 },
+    );
+
+    expect(result.nodes).toEqual([]);
+  });
+});
+
 describe('discoverProjectTree — project descend strategy', () => {
   /**
    * Round-05 review (codex-03): `descend.ts` was implemented and unit-tested in isolation but
@@ -535,13 +614,17 @@ describe('discoverProjectTree — resilience', () => {
   });
 
   it('gives overlapping roots distinct, non-colliding nodes keyed by rootId', async () => {
-    const nested = dir({ 'x.txt': file() });
+    // Two configured roots pointing at the very same physical directory: since the root itself
+    // is never a node (only its children are), the collision this guards against shows up one
+    // level down — both roots list the same child "x", which must come back as two distinct
+    // nodes (same pathFromRoot, different rootId), not one deduplicated node.
+    const nested = dir({ x: dir() });
     const testRoot = dir({ nested });
     const fs = new FakeFileSystem(testRoot);
 
     const result = await discoverProjectTree(
       [
-        { id: 'outer', path: '' },
+        { id: 'outer', path: '/nested' },
         { id: 'inner', path: '/nested' },
       ],
       [],
@@ -552,12 +635,9 @@ describe('discoverProjectTree — resilience', () => {
     expect(result.nodes).toHaveLength(2);
     const outer = result.nodes.find((node) => node.facts.rootId === 'outer');
     const inner = result.nodes.find((node) => node.facts.rootId === 'inner');
-    expect(outer?.facts.pathFromRoot).toBe('');
-    expect(inner?.facts.pathFromRoot).toBe('');
+    expect(outer?.facts.pathFromRoot).toBe('x');
+    expect(inner?.facts.pathFromRoot).toBe('x');
     expect(outer?.facts.rootId).not.toBe(inner?.facts.rootId);
-    const outerNodes = outer ? [outer] : [];
-    const nestedUnderOuter = findByPath(outerNodes, 'nested');
-    expect(nestedUnderOuter?.facts.rootId).toBe('outer');
   });
 
   it('handles hundreds of sibling directories without the concurrency pool degrading', async () => {
@@ -580,7 +660,7 @@ describe('discoverProjectTree — resilience', () => {
       { maxDepth: 2, concurrency: CONCURRENCY },
     );
 
-    expect(result.nodes[0]?.children).toHaveLength(CHILD_COUNT);
+    expect(result.nodes).toHaveLength(CHILD_COUNT);
     expect(fs.peakActiveReads).toBeLessThanOrEqual(CONCURRENCY);
     expect(fs.peakActiveReads).toBeGreaterThan(1); // proves reads actually overlapped, not serialized
   });

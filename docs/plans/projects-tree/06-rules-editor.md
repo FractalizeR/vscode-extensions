@@ -11,7 +11,7 @@
 ## Пакет 06-A. Стек webview
 
 Файлы: `packages/projects-tree/webview/{package.json,vite.config.ts,src/main.ts}`,
-`src/editor/rulesEditor/panel.ts`.
+`src/editor/rules-editor/panel.ts`.
 
 Решения:
 - редактор правит **файл правил**, а не `settings.json` (см. [00-overview.md](00-overview.md));
@@ -29,7 +29,7 @@ DoD: панель открывается, выглядит в соответст
 
 ## Пакет 06-B. Протокол между расширением и webview
 
-Файлы: `src/editor/rulesEditor/{protocol.ts,host.ts}`, `webview/src/api.ts`.
+Файлы: `src/editor/rules-editor/{protocol.ts,host.ts}`, `webview/src/api.ts`.
 
 ```ts
 type ToWebview =

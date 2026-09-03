@@ -21,7 +21,7 @@ packages/projects-tree/src/
     discovery/        — filesystem traversal, cancellation, child-fetch strategies
     actions/           — action model, rendering, quoting
   editor/        — VS Code adapter (delivery)
-    treeView/  decorations/  commands/  onboarding/  rulesEditor/
+    tree-view/  decorations/  commands/  onboarding/  rules-editor/
 ```
 
 `src/projects/**` must not import `vscode`. This is a machine-checked boundary

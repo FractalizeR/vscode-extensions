@@ -14,6 +14,11 @@
  * (codex-03) found this wiring missing entirely: `descend.ts` was implemented and tested in
  * isolation but never called from here, so `submodules` had no effect on the tree `walkRoot`
  * produced.
+ *
+ * `walkRoot` never returns the root itself as a node — `result.nodes` is the root's own children.
+ * `applyDescendStrategy` therefore runs once per top-level node, not once on a wrapping root node
+ * (a real user root containing a repo marker, e.g. `.idea`, must not be classified `project` and
+ * collapse the whole tree into itself — see `walker.ts`'s doc comment).
  */
 import type { Rule } from '../classification/index.js';
 import type { CancellationSignal } from './cancellation.js';
@@ -105,10 +110,12 @@ export async function discoverProjectTree(
   const diagnostics: DiscoverDiagnostic[] = [];
   for (const [index, result] of results.entries()) {
     diagnostics.push(...result.diagnostics);
-    if (result.node === undefined) continue;
     const descendContext: DescendContext = { fs, rules, signal, maxDepth };
     const strategy = roots[index]?.descend ?? DEFAULT_DESCEND_STRATEGY;
-    nodes.push(await applyDescendStrategy(result.node, strategy, descendContext, diagnostics));
+    const rewritten = await Promise.all(
+      result.nodes.map((node) => applyDescendStrategy(node, strategy, descendContext, diagnostics)),
+    );
+    nodes.push(...rewritten);
   }
   return { nodes, diagnostics };
 }
