@@ -69,12 +69,23 @@
         "title": "%command.refresh.title%",
         "category": "%configuration.title%",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "projectsTree.addRoot",
+        "title": "%command.addRoot.title%",
+        "category": "%configuration.title%",
+        "icon": "$(add)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "projectsTree.refresh",
+          "when": "view == projectsTree.view",
+          "group": "navigation"
+        },
+        {
+          "command": "projectsTree.addRoot",
           "when": "view == projectsTree.view",
           "group": "navigation"
         }

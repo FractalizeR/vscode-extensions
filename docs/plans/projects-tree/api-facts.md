@@ -464,6 +464,59 @@ webview-персистентность — 9449, `FileDecoration.propagate` — 
 само по себе утверждение об API, и именно оно обосновывает значение `engines.vscode = ^1.85.0` в
 01-D — до этой строки данное значение держалось на непроверенном допущении.
 
+**36. `workbench.action.openSettings` accepts a plain string argument as the settings search
+query, kept for backward compatibility.** Тип: цитата.
+`microsoft/vscode@main src/vs/workbench/contrib/preferences/browser/preferences.contribution.ts`
+(`curl` + `grep -n`), the command's handler:
+```ts
+run(accessor: ServicesAccessor, args: string | IOpenSettingsActionOptions) {
+    // args takes a string for backcompat
+    const opts = typeof args === 'string' ? { query: args } : sanitizeOpenSettingsArgs(args);
+```
+
+Следствие: `command:workbench.action.openSettings?<arg>` с одним строковым аргументом (например,
+`@ext:fractalizer.projects-tree`) открывает настройки, уже отфильтрованные этим запросом — не
+нужен объектный аргумент `{ query: ... }`, хотя он тоже работает (факт подтверждает оба пути, но
+план использует более короткий строковый).
+
+**37. Ссылка `command:` в trusted Markdown декодирует query как JSON; не-массив оборачивается в
+массив из одного аргумента перед вызовом команды.** Тип: цитата.
+`microsoft/vscode@main src/vs/editor/browser/services/openerService.ts:47-59` (`curl` + `grep -n`):
+```ts
+let args: unknown[] = [];
+try {
+    args = parse(decodeURIComponent(target.query));
+} catch {
+    try {
+        args = parse(target.query);
+    } catch {
+        // ignore error
+    }
+}
+if (!Array.isArray(args)) {
+    args = [args];
+}
+await this._commandService.executeCommand(target.path, ...args);
+```
+
+Следствие: ссылка вида `[Open Settings](command:workbench.action.openSettings?%22%40ext%3A...%22)`
+— query это URI-кодированный JSON-литерал строки (включая кавычки) — декодируется в одну строку,
+оборачивается в `[строка]` и передаётся `executeCommand('workbench.action.openSettings', строка)`,
+что по факту 36 задаёт `query` диалога настроек. Используется в `viewsWelcome` (03-C, 03-05) для
+ссылки на отфильтрованные настройки расширения без объектного аргумента.
+
+
+**38. `workspace.onDidChangeConfiguration` fires whenever configuration changed, with no carve-out
+for a change written by the extension's own `WorkspaceConfiguration.update()` call.** Тип: цитата.
+`vscode.d.ts:13603-13607` (`grep -n "onDidChangeConfiguration" dts185.ts` → строка 13607):
+> «An event that is emitted when the {@link WorkspaceConfiguration configuration} changed.»
+> `export const onDidChangeConfiguration: Event<ConfigurationChangeEvent>;`
+
+Следствие: слушатель, уже подписанный `onTreeConfigurationChanged` (`docs/plans/projects-tree/
+00-overview.md`), реагирует и на программную запись `projectsTree.addRoot` (04-E) через
+`update(..., ConfigurationTarget.Global)`, не только на правку файла настроек руками — отдельного
+механизма «обновить дерево после своей же записи» не нужно.
+
 ## Опровергнутые утверждения предыдущих ревизий
 
 Секция ведётся намеренно: план однажды уже построил на каждом из них решение.

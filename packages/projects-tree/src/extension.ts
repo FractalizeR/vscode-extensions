@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
 import { DEFAULT_RULES } from './projects/classification/index.js';
 import { createNodeFileSystemReader } from './projects/discovery/index.js';
-import { registerOpenProjectCommand, registerRefreshCommand } from './editor/commands/index.js';
+import {
+  registerAddRootCommand,
+  registerOpenProjectCommand,
+  registerRefreshCommand,
+} from './editor/commands/index.js';
 import {
   onTreeConfigurationChanged,
   readRoots,
@@ -43,6 +47,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerTreeDataProvider(VIEW_ID, provider),
     registerOpenProjectCommand(),
     registerRefreshCommand(provider),
+    registerAddRootCommand(),
     onTreeConfigurationChanged(() => void refreshFromSettings()),
   );
 
