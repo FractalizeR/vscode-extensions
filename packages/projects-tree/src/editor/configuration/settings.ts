@@ -79,11 +79,31 @@ export function readShowRootNodes(): ShowRootNodes {
   return raw === 'always' || raw === 'never' ? raw : DEFAULT_SHOW_ROOT_NODES;
 }
 
+/**
+Where the tree is shown. Owned here rather than in `tree-view/location.ts` for the same reason as
+`ShowRootNodes`: it is the value space of a setting, and `configuration/` is what turns settings into
+types the rest of the adapter can trust.
+*/
+export type TreeLocation = 'activityBar' | 'explorer' | 'none';
+
+const DEFAULT_LOCATION: TreeLocation = 'activityBar';
+
+/**
+Unknown values fall back to the default rather than hiding the tree: `location` decides whether the
+user sees anything at all, so a typo in settings.json must not produce an empty editor with no
+explanation.
+*/
+export function readLocation(): TreeLocation {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<unknown>('location');
+  return raw === 'explorer' || raw === 'none' ? raw : DEFAULT_LOCATION;
+}
+
 export function onTreeConfigurationChanged(listener: () => void): vscode.Disposable {
   return vscode.workspace.onDidChangeConfiguration((event) => {
     if (
       event.affectsConfiguration(`${SECTION}.roots`) ||
-      event.affectsConfiguration(`${SECTION}.showRootNodes`)
+      event.affectsConfiguration(`${SECTION}.showRootNodes`) ||
+      event.affectsConfiguration(`${SECTION}.location`)
     ) {
       listener();
     }

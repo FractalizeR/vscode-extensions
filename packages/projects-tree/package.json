@@ -30,7 +30,8 @@
     }
   },
   "activationEvents": [
-    "onView:projectsTree.view"
+    "onView:projectsTree.view",
+    "onView:projectsTree.explorerView"
   ],
   "contributes": {
     "jsonValidation": [
@@ -52,13 +53,26 @@
       "projectsTree": [
         {
           "id": "projectsTree.view",
-          "name": "%view.projectsTree.name%"
+          "name": "%view.projectsTree.name%",
+          "when": "projectsTree.locationIsActivityBar"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "projectsTree.explorerView",
+          "name": "%view.projectsTree.name%",
+          "when": "projectsTree.locationIsExplorer"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "projectsTree.view",
+        "contents": "%viewsWelcome.noRoots%",
+        "when": "!projectsTree.hasRoots"
+      },
+      {
+        "view": "projectsTree.explorerView",
         "contents": "%viewsWelcome.noRoots%",
         "when": "!projectsTree.hasRoots"
       }
@@ -87,6 +101,16 @@
         {
           "command": "projectsTree.addRoot",
           "when": "view == projectsTree.view",
+          "group": "navigation"
+        },
+        {
+          "command": "projectsTree.refresh",
+          "when": "view == projectsTree.explorerView",
+          "group": "navigation"
+        },
+        {
+          "command": "projectsTree.addRoot",
+          "when": "view == projectsTree.explorerView",
           "group": "navigation"
         }
       ]
@@ -137,6 +161,22 @@
           "default": "auto",
           "scope": "window",
           "description": "%configuration.showRootNodes.description%"
+        },
+        "projectsTree.location": {
+          "type": "string",
+          "enum": [
+            "activityBar",
+            "explorer",
+            "none"
+          ],
+          "enumDescriptions": [
+            "%configuration.location.enum.activityBar%",
+            "%configuration.location.enum.explorer%",
+            "%configuration.location.enum.none%"
+          ],
+          "default": "activityBar",
+          "scope": "window",
+          "description": "%configuration.location.description%"
         }
       }
     }

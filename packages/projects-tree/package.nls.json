@@ -9,5 +9,9 @@
   "configuration.showRootNodes.enum.auto": "Group only when more than one root is configured; a single root's content is shown directly.",
   "configuration.showRootNodes.enum.always": "Always show a group node per root, even with a single root.",
   "configuration.showRootNodes.enum.never": "Never group; every root's content is shown together at the top level.",
-  "command.addRoot.title": "Add Root Folder…"
+  "command.addRoot.title": "Add Root Folder…",
+  "configuration.location.description": "Where the projects tree is shown.",
+  "configuration.location.enum.activityBar": "Its own container in the Activity Bar.",
+  "configuration.location.enum.explorer": "A view inside the Explorer, next to the file tree.",
+  "configuration.location.enum.none": "Nowhere — no tree; use the command to pick a project instead."
 }
