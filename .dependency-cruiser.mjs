@@ -63,7 +63,7 @@ export default {
       name: 'no-node-builtins-in-core-logic',
       comment:
         'Ядру запрещён доступ к ФС и процессу напрямую (node:fs, node:child_process и т.п.) — ' +
-        'единственное разрешённое место для этого — порт ФС (src/projects/discovery/fileSystem.ts), ' +
+        'единственное разрешённое место для этого — порт ФС (src/projects/discovery/file-system.ts), ' +
         'иначе граница "ядро тестируемо на фейковой ФС" протекает молча. Список builtins сужен до тех, ' +
         'к которым относится это обоснование: чисто вычислительные модули (node:path, node:url и т.п.) ' +
         'ядру не запрещены. Матчер — по имени builtin-модуля (dependency-cruiser резолвит "node:fs" в ' +
@@ -71,7 +71,7 @@ export default {
       severity: 'error',
       from: {
         path: '(^|/)src/projects/',
-        pathNot: String.raw`(^|/)src/projects/discovery/fileSystem\.ts$`,
+        pathNot: String.raw`(^|/)src/projects/discovery/file-system\.ts$`,
       },
       to: {
         dependencyTypes: ['core'],
