@@ -18,7 +18,9 @@
     "knip": "knip",
     "test": "vitest run",
     "schema:check": "node packages/projects-tree/schemas/check-schema.mjs",
-    "check": "pnpm run format:check && pnpm run typecheck && pnpm run lint && pnpm run depcruise && pnpm run depcruise:negative && pnpm run knip && pnpm run test && pnpm run schema:check"
+    "check": "pnpm run format:check && pnpm run typecheck && pnpm run lint && pnpm run depcruise && pnpm run depcruise:negative && pnpm run knip && pnpm run test && pnpm run l10n:check && pnpm run schema:check",
+    "l10n:generate": "node tools/check-l10n.ts generate",
+    "l10n:check": "node tools/check-l10n.ts check"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",

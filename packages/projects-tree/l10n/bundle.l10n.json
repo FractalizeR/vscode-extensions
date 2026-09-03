@@ -1,1 +1,5 @@
-{}
+{
+  "Add as Project Root": "Add as Project Root",
+  "Ignoring {0} invalid entry/entries in projectsTree.roots — each must be an absolute path, or an object with an absolute \"path\".": "Ignoring {0} invalid entry/entries in projectsTree.roots — each must be an absolute path, or an object with an absolute \"path\".",
+  "Open Project": "Open Project"
+}

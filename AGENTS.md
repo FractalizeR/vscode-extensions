@@ -40,10 +40,15 @@ current steps, in order:
 5. `depcruise:negative` — intentional violator fixtures must fail their rule
 6. `knip` — dead code and unused dependencies
 7. `test` — vitest
+8. `l10n:check` — every English string has a Russian counterpart, in both the manifest
+   (`package.nls*.json`) and the runtime (`l10n/bundle.l10n*.json`) channel
+9. `schema:check` — `rules.schema.json` compiles as a self-contained JSON Schema
 
 The package that introduces a new class of check adds it to this list in the same change. Do not
 add a check to CI or to a package script without also wiring it into `pnpm check`, and do not treat
-a check as covered by `pnpm check` unless it runs there.
+a check as covered by `pnpm check` unless it runs there. This list is machine-checked against the
+actual `check` chain (`tools/check-chain.test.ts`) — it drifted once already, `schema:check` having
+been added to the chain without being written down here.
 
 Integration tests (`@vscode/test-cli`) require a running editor and stay out of `pnpm check` for
 that reason; they run in their own CI job instead. Introduced by
