@@ -517,6 +517,362 @@ for a change written by the extension's own `WorkspaceConfiguration.update()` ca
 `update(..., ConfigurationTarget.Global)`, не только на правку файла настроек руками — отдельного
 механизма «обновить дерево после своей же записи» не нужно.
 
+## Пакет 03-B: декорации и метки
+
+**39. `createTreeView(viewId, options)` существует, и `TreeViewOptions` несёт `treeDataProvider`,
+`showCollapseAll`, `canSelectMany`, `dragAndDropController`, `manageCheckboxStateManually`.** Тип:
+цитата. `vscode.d.ts:11697-11703`:
+> «Create a {@link TreeView} for the view contributed using the extension point `views`.
+> @param viewId Id of the view contributed using the extension point `views`.
+> @param options Options for creating the {@link TreeView}
+> @returns a {@link TreeView}.»
+> `export function createTreeView<T>(viewId: string, options: TreeViewOptions<T>): TreeView<T>;`
+
+`vscode.d.ts:11852` (`export interface TreeViewOptions<T> {`) с полями `treeDataProvider`
+(`:1855-1857`), `showCollapseAll?: boolean` (`:1862`), `canSelectMany?: boolean` (`:1868`),
+`dragAndDropController?: TreeDragAndDropController<T>` (`:1873`),
+`manageCheckboxStateManually?: boolean` (описано текстом, поле объявлено дальше в том же
+интерфейсе).
+На планке 1.85.0: есть (`grep -n "export function createTreeView" dts185.ts` → строка 10933;
+поля `TreeViewOptions` — `grep -n "manageCheckboxStateManually\|dragAndDropController\|canSelectMany\|showCollapseAll" dts185.ts`, все найдены внутри интерфейса на строках 11092-11142).
+
+**40. `TreeView` несёт `onDidExpandElement`/`onDidCollapseElement`, оба типа
+`Event<TreeViewExpansionEvent<T>>`, где `TreeViewExpansionEvent<T>.element: T`.** Тип: цитата.
+`vscode.d.ts:12146-12154`:
+> «Event that is fired when an element is expanded»
+> `readonly onDidExpandElement: Event<TreeViewExpansionEvent<T>>;`
+> «Event that is fired when an element is collapsed»
+> `readonly onDidCollapseElement: Event<TreeViewExpansionEvent<T>>;`
+
+`vscode.d.ts:11918-11924`, `TreeViewExpansionEvent<T>`:
+> «Element that is expanded or collapsed.»
+> `readonly element: T;`
+
+Следствие: пейлоад события — не diff и не индекс, а сам элемент дерева (тип `T` расширения);
+подписка на оба события — единственный способ узнать о раскрытии/сворачивании узла пользователем.
+На планке 1.85.0: есть (`grep -n "onDidExpandElement\|onDidCollapseElement" dts185.ts` → строки
+11377, 11382; `TreeViewExpansionEvent` — строка 11148).
+
+**41. `TreeItem.collapsibleState` — только *значение по умолчанию* при первом появлении узла;
+если узел с тем же `id` (идентичность, факт 27) уже есть в дереве, побеждает его собственное
+сохранённое состояние раскрытия, а не то, что вернул `getTreeItem`.** Тип: вывод. Прямого
+докстринга у `collapsibleState` для этого нет (`vscode.d.ts:12352-12354`: «{@link
+TreeItemCollapsibleState} of the tree item.» — не говорит о приоритете); посылки взяты из
+реализации.
+
+`microsoft/vscode@main src/vs/workbench/browser/parts/views/treeView.ts:752-754`, опция дерева
+`collapseByDefault`:
+> ```ts
+> collapseByDefault: (e: ITreeItem): boolean => {
+>     return e.collapsibleState !== TreeItemCollapsibleState.Expanded;
+> },
+> ```
+
+`src/vs/base/browser/ui/tree/asyncDataTree.ts:611`, куда эта опция транслируется:
+> `this.getDefaultCollapseState = e => options.collapseByDefault ? (options.collapseByDefault(e) ? ObjectTreeElementCollapseState.PreserveOrCollapsed : ObjectTreeElementCollapseState.PreserveOrExpanded) : undefined;`
+
+`src/vs/base/browser/ui/tree/tree.ts:83-95`, `enum ObjectTreeElementCollapseState`:
+> «`PreserveOrExpanded` — If the element is already in the tree, preserve its current state. Else,
+> expand it.»
+> «`PreserveOrCollapsed` — If the element is already in the tree, preserve its current state. Else,
+> collapse it.»
+
+Следствие: значение `collapsibleState`, которое узел получает от `getTreeItem` при каждом
+`refresh`, не переопределяет уже раскрытый/свёрнутый узел (идентифицированный по `TreeItem.id`,
+факт 27) — оно применяется только когда узел появляется в дереве впервые. Решению 03-B не нужно
+(и бессмысленно) пересчитывать `collapsibleState` при каждом обновлении, чтобы «удержать» состояние
+раскрытия — платформа уже это делает через `Preserve*`.
+
+**42. `TreeItem.label` принимает `string | TreeItemLabel`; `TreeItem.description` существует,
+типа `string | boolean`, и рендерится как менее заметный текст, при `true` выводится из
+`resourceUri`.** Тип: цитата. `vscode.d.ts:12301-12325`:
+> «A human-readable string describing this item. When `falsy`, it is derived from {@link
+> TreeItem.resourceUri resourceUri}.»
+> `label?: string | TreeItemLabel;`
+> «A human-readable string which is rendered less prominent. When `true`, it is derived from
+> {@link TreeItem.resourceUri resourceUri} and when `falsy`, it is not shown.»
+> `description?: string | boolean;`
+
+На планке 1.85.0: есть (`grep -n "label?: string | TreeItemLabel;\|description?: string | boolean;" dts185.ts` → строки 11530, 11559).
+
+**43. `ThemeColor` конструируется из `id: string`; цвет, объявленный через `contributes.colors`,
+потребляется именно этим конструктором.** Тип: цитата. `vscode.d.ts:918-929`:
+> «A reference to one of the workbench colors as defined in
+> https://code.visualstudio.com/api/references/theme-color. Using a theme color is preferred over
+> a custom color as it gives theme authors and users the possibility to change the color.»
+> `readonly id: string;`
+> «Creates a reference to a theme color. @param id of the color. The available colors are listed in
+> https://code.visualstudio.com/api/references/theme-color.»
+> `constructor(id: string);`
+
+`vscode-docs/api/references/contribution-points.md:215-243` (`contributes.colors`):
+> «Contributes new themable colors. These colors can be used by the extension in editor decorators
+> and in the status bar. Once defined, users can customize the color in the
+> `workspace.colorCustomization` setting and user themes can set the color value.»
+> «Extensions can consume new and existing theme colors with the `ThemeColor` API:»
+> `const errorColor = new vscode.ThemeColor("superstatus.error");`
+
+Следствие: `id`, зарегистрированный расширением через `contributes.colors`, — валидный аргумент
+`new ThemeColor(id)`; отдельного «списка допустимых id» для сборки нет, doc-пример показывает свой
+же вклад как id. Расхождение имени настройки (`workspace.colorCustomization` вместо действующего
+`workbench.colorCustomizations`) уже зафиксировано фактом 32 и на эту строку не переносится.
+На планке 1.85.0: есть (`grep -n "constructor(id: string);" dts185.ts` → строка 894, класс
+`ThemeColor`, первое совпадение в файле).
+
+**44. `ThemeIcon` конструктор — `(id: string, color?: ThemeColor)`; переданный цвет применяется
+именно в `TreeItem`.** Тип: цитата. `vscode.d.ts:940-966`:
+> «The optional ThemeColor of the icon. The color is currently only used in {@link TreeItem}.»
+> `readonly color?: ThemeColor | undefined;`
+> «Creates a reference to a theme icon. @param id id of the icon… @param color optional
+> `ThemeColor` for the icon. The color is currently only used in {@link TreeItem}.»
+> `constructor(id: string, color?: ThemeColor);`
+
+Следствие: второй аргумент `ThemeIcon` — не общего назначения, докстринг сам называет `TreeItem`
+единственным потребителем; для ProjectsTree это прямо то место, где план собирается его применять,
+а не побочный эффект, обнаруженный опытным путём.
+На планке 1.85.0: есть (`grep -n "constructor(id: string, color?: ThemeColor);" dts185.ts` →
+строка 937).
+
+**45. `FileDecoration` конструктор — `(badge?: string, tooltip?: string, color?: ThemeColor)` в
+этом порядке; `propagate` в конструктор не входит и выставляется отдельным присваиванием
+свойства.** Тип: цитата. `vscode.d.ts:8256-8281`:
+> `badge?: string;`
+> «A human-readable tooltip for this decoration.»
+> `tooltip?: string;`
+> «The color of this decoration.»
+> `color?: ThemeColor;`
+> «A flag expressing that this decoration should be propagated to its parents.»
+> `propagate?: boolean;`
+> «Creates a new decoration. @param badge A letter that represents the decoration. @param tooltip
+> The tooltip of the decoration. @param color The color of the decoration.»
+> `constructor(badge?: string, tooltip?: string, color?: ThemeColor);`
+
+Следствие: `new FileDecoration(badge, tooltip, color)` не может сразу выставить `propagate` —
+нужна отдельная строка `deco.propagate = true` после конструктора; порядок параметров конструктора
+(`badge`, затем `tooltip`, затем `color`) значим для позиционного вызова.
+На планке 1.85.0: есть (`grep -n "constructor(badge?: string, tooltip?: string, color?: ThemeColor);" dts185.ts` → строка 7555).
+
+## Пакет 03-C: размещение view
+
+**46. `contributes.views` принимает `explorer`, `scm`, `debug`, `test` как встроенные id
+контейнеров, плюс кастомные из `viewsContainers`; `explorer` — точный id.** Тип: цитата.
+`vscode-docs/api/references/contribution-points.md:1624-1628`:
+> «Contribute a view to VS Code. You must specify an identifier and name for the view. You can
+> contribute to following view containers:»
+> «- `explorer`: Explorer view container in the Activity Bar»
+
+Следствие: `"views": { "explorer": [...] }` — рабочий способ добавить ProjectsTree в Explorer без
+собственного контейнера, если план выберет это размещение вместо `viewsContainers.activitybar`.
+
+**47. Кастомный контейнер `viewsContainers.activitybar` регистрируется с `hideIfEmpty: true`
+безусловно — платформа сама прячет его иконку в Activity Bar, когда ни один вложенный view не
+проходит свой `when` (в частности когда единственный view скрыт).** Тип: вывод. Цепочка посылок —
+все из `microsoft/vscode@main`:
+
+`src/vs/workbench/api/browser/viewsExtensionPoint.ts:318-320` (обработка ключа `activitybar` из
+манифеста `viewsContainers`):
+> ```ts
+> case 'activitybar':
+>     activityBarOrder = this.registerCustomViewContainers(value, description, activityBarOrder, existingViewContainers, ViewContainerLocation.Sidebar);
+>     break;
+> ```
+
+`viewsExtensionPoint.ts:403-417`, `registerCustomViewContainer` — та же функция, куда попадают все
+контейнеры из `viewsContainers.activitybar`:
+> ```ts
+> viewContainer = this.viewContainersRegistry.registerViewContainer({
+>     id, title: { value: title, original: title }, extensionId,
+>     ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [id, { mergeViewWithContainerWhenSingleView: true }]),
+>     hideIfEmpty: true,
+>     order, icon,
+> }, location);
+> ```
+
+`src/vs/workbench/services/views/common/viewContainerModel.ts:527` — `activeViewDescriptors`
+отфильтрован тем же `when`, что использует `contributes.views[].when`:
+> `state.active = this.contextKeyService.contextMatchesRules(viewDescriptor.when);`
+
+`src/vs/workbench/services/views/browser/viewsService.ts:191` — контекст-ключ, управляющий
+видимостью композита (иконки) контейнера:
+> `contextKey.set(!(viewContainer.hideIfEmpty && this.viewDescriptorService.getViewContainerModel(viewContainer).activeViewDescriptors.length === 0));`
+
+`viewContainerModel.ts:339` — пересчёт реактивен, а не только при добавлении/удалении view:
+> `this._register(Event.filter(contextKeyService.onDidChangeContext, e => e.affectsSome(this.contextKeys))(() => this.onDidChangeContext()));`
+
+Следствие, **опровергающее исходную посылку плана**: контейнер, вклад в который сделан через
+`viewsContainers.activitybar`, не оставляет пустую иконку, когда единственный view скрыт `when` —
+`hideIfEmpty: true` жёстко зашит для всех расширений в `registerCustomViewContainer`, а
+`activeViewDescriptors` (на который завязан `hideIfEmpty`) пересчитывается при каждом изменении
+контекста, влияющего на `when` view. Иконка контейнера гаснет вместе со скрытием его единственного
+view, а не остаётся пустой рамкой. Явно проверяемого «эффекта на планке 1.85.0» здесь нет —
+цитируемые файлы не являются частью `vscode.d.ts`, это поведение хоста, а не API-поверхность,
+которую можно закрепить по тегу; уверенность в стабильности этого поведения между 1.85 и `main` не
+выше, чем у остальных фактов на реализации хоста в этой таблице (2, 3, 6, 8, 9, 28).
+
+**48. `ExtensionContext.globalState` — `Memento & { setKeysForSync }`; `Memento.update` асинхронен
+(`Thenable<void>`), `get`/`keys` синхронны.** Тип: цитата. `vscode.d.ts:8585-8615`:
+> «Returns the stored keys. @returns The stored keys.»
+> `keys(): readonly string[];`
+> «Return a value. @param key A string. @returns The stored value or `undefined`.»
+> `get<T>(key: string): T | undefined;`
+> «Store a value. The value must be JSON-stringifyable. …»
+> `update(key: string, value: any): Thenable<void>;`
+
+Следствие: запись состояния (например, списка выбранных корней в 03-A/04-E) обязана
+`await`-иться или обрабатываться как промис — `update` не завершается синхронно.
+На планке 1.85.0: есть (`grep -n "update(key: string, value: any): Thenable<void>;" dts185.ts` →
+строка 7888, внутри `interface Memento`, объявленного строкой 7852).
+
+## Пакет 03-D: локализация
+
+**49. Сообщение, переданное первым аргументом в `l10n.t(message, …)`, само служит ключом поиска
+в загруженном бандле — отдельного идентификатора не заводится.** Тип: цитата.
+`src/vs/workbench/api/common/extHostLocalizationService.ts:34-48`, `getMessage`:
+> ```ts
+> getMessage(extensionId: string, details: IStringDetails): string {
+>     const { message, args, comment } = details;
+>     if (this.isDefaultLanguage) {
+>         return format2(message, (args ?? {}));
+>     }
+>     let key = message;
+>     if (comment && comment.length > 0) {
+>         key += `/${Array.isArray(comment) ? comment.join('') : comment}`;
+>     }
+>     const str = this.bundleCache.get(extensionId)?.contents[key];
+> ```
+
+Следствие: базовый бандл, из которого план генерирует переводы (`00-overview.md`), — это словарь
+«английская строка кода → перевод», а не «символьный id → перевод»; ключ в `bundle.l10n.<lang>.json`
+обязан дословно совпадать со строкой, переданной в `l10n.t`, плюс опциональный суффикс
+`/<comment>`.
+
+**50. Базовый (английский) `bundle.l10n.json` в рантайме не требуется: при `env.language`,
+равном языку по умолчанию, платформа не обращается к бандлу вовсе; при отсутствии перевода для
+ключа `l10n.t` возвращает сам аргумент `message`.** Тип: цитата.
+`extHostLocalizationService.ts:35-37` (та же функция `getMessage`, что и факт 49):
+> ```ts
+> if (this.isDefaultLanguage) {
+>     return format2(message, (args ?? {}));
+> }
+> ```
+
+`extHostLocalizationService.ts:44-48`:
+> ```ts
+> const str = this.bundleCache.get(extensionId)?.contents[key];
+> if (!str) {
+>     this.logService.warn(`Using default string since no string found in i18n bundle that has the key: ${key}`);
+> }
+> return format2(str ?? message, (args ?? {}));
+> ```
+
+Независимое подтверждение — докстринг `vscode.d.ts:18257-18260`, `l10n.bundle`:
+> «The bundle of localized strings that have been loaded for the extension. It's undefined if no
+> bundle has been loaded. The bundle is typically not loaded if there was no bundle found or when
+> we are running with the default language.»
+
+Следствие: пакету 03-D не нужно поставлять `bundle.l10n.json` (без суффикса языка) как отдельный
+файл для рантайм-строк — при английской локали загрузки бандла не происходит вообще (`getMessage`
+формирует строку из `message` напрямую), а при любой другой локали отсутствие ключа или файла
+деградирует до английского текста с предупреждением в лог, не до ошибки.
+На планке 1.85.0: есть (`grep -n "export const bundle" dts185.ts` → строка 17032).
+
+**51. Манифестные переводы называются `package.nls.{locale}.json` (например `package.nls.ru.json`
+для русской локали); английский вариант — `package.nls.json` без суффикса, платформа сама
+выбирает файл по локали пользователя и делает fallback на английский при пропуске ключа.** Тип:
+цитата. `microsoft/vscode-l10n@main README.md:32-75` (`curl` + `grep -n`):
+> «This file, along with `package.nls.{locale}.json` files, are used for translating static
+> contributions in your extension's `package.json`.»
+> «Your `./package.nls.de.json`:»
+> «VS Code will automatically load the correct `package.nls.{locale}.json` (or `package.nls.json`
+> for English) file based on the locale of the user. If no translation is available for a given
+> key, VS Code will fall back to the English translation.»
+
+Следствие: для русской локали файл называется `package.nls.ru.json` — прямое применение
+шаблона `{locale}` из цитаты (источник иллюстрирует шаблон примером `.de.json`, не `.ru.json`
+буквально; подстановка `ru` — не отдельное утверждение источника, а инстанциация
+задокументированного шаблона). Комбинируется с фактом 30 (`%key%`/`package.nls.json`) — 30 фиксирует
+синтаксис ссылки и базовый файл, эта строка — правило именования файла перевода.
+
+**52. `env.language` — документированный способ узнать активную локаль редактора; `l10n.bundle`/
+`l10n.uri` — соответственно загруженный бандл и его путь, оба `undefined`, когда бандл не
+загружен.** Тип: цитата. `vscode.d.ts:10771-10773`:
+> «Represents the preferred user-language, like `de-CH`, `fr`, or `en-US`.»
+> `export const language: string;`
+
+`vscode.d.ts:18199-18201` (докстринг `l10n.t`, ссылающийся на `env.language`):
+> «If a localized bundle is available for the language specified by {@link env.language} and the
+> bundle has a localized value for this message, then that localized value will be returned…»
+
+Следствие: `vscode.l10n` не выставляет собственного «текущий язык» — план обязан читать
+`vscode.env.language`, если решению 03-D нужно ветвиться по локали в коде (а не полагаться на
+подстановку `l10n.t`).
+На планке 1.85.0: есть (`grep -n "export const language: string;" dts185.ts` не совпал по
+пробелам — фактическое совпадение `grep -n "preferred user-language" dts185.ts` → строка 10035,
+`export const language: string;` — строка 10037).
+
+## Интеграционное тестирование
+
+**53. `@vscode/test-cli` ищет конфиг `.vscode-test.(js|json|mjs)` рядом с текущей директорией,
+экспортирует `defineConfig`, конфиг несёт обязательный `files` и опциональный
+`extensionDevelopmentPath`, тесты запускаются под Mocha через CLI-бинарь `vscode-test`.** Тип:
+цитата. `microsoft/vscode-test-cli@main README.md:11-16` (`curl` + `grep -n`):
+> «After installing the package, the runner is available as the `vscode-test` CLI. Running it will
+> look for a `.vscode-test.(js/json/mjs)` file relative to the current working directory.»
+
+Тот же README, пример конфигурации:
+> ```js
+> import { defineConfig } from '@vscode/test-cli';
+> export default defineConfig({ files: 'out/test/**/*.test.js' });
+> ```
+> «Tests included with this command line are run in Mocha.»
+
+`src/cli/args.mts:10` (`curl` + `grep -n "vscode-test\."`), значение по умолчанию для аргумента
+конфига:
+> `export const configFileDefault = 'nearest .vscode-test.js';`
+
+`src/config.cts:9-29` (`curl` + `grep -n "files:\|extensionDevelopmentPath"`):
+> «A file or list of files in which to find tests. Non-absolute paths will…»
+> `files: string | readonly string[];`
+> `extensionDevelopmentPath?: string | readonly string[];`
+
+`src/runner.cts:8` (`curl` + `grep -n "Mocha"`):
+> `const Mocha = (await import('mocha')).default;`
+
+Следствие: скрипт `test:integration` (стадия 03) — это `vscode-test`, конфиг —
+`.vscode-test.mjs` с `defineConfig`, набор тестов пишется под Mocha (`describe`/`it`), а не под
+`vitest`, которым покрыт `src/projects/**`.
+
+**54. `@vscode/test-electron` скачивает и запускает настоящую сборку VS Code
+(`downloadAndUnzipVSCode`/`runTests`); `@vscode/test-cli` использует этот модуль как основу.**
+Тип: цитата. `microsoft/vscode-test@main README.md:1-19` (`curl` + `grep -n`):
+> «This module helps you test VS Code extensions. Note that new extensions may want to use the
+> [VS Code Test CLI](https://github.com/microsoft/vscode-test-cli/blob/main/README.md), which
+> leverages this module, for a richer editing and execution experience.»
+> `import { runTests, runVSCodeCommand, downloadAndUnzipVSCode } from '@vscode/test-electron';`
+
+Следствие: `@vscode/test-cli` — надстройка над `@vscode/test-electron`, а не независимая
+реализация; настоящий редактор запускается транзитивно через тот же механизм
+(`downloadAndUnzipVSCode` + `runTests`), а не эмулируется.
+
+**55. `@vscode/test-cli`/`@vscode/test-electron` под Linux в CI требуют `xvfb`: официальный
+пример пайплайна оборачивает запуск тестов в `xvfb-run` именно на Linux, и только там.** Тип:
+цитата. `microsoft/vscode-test@main sample/.github/workflows/ci.yml:24-31` (`curl` + `cat`):
+> ```yaml
+> - name: Run tests
+>   run: xvfb-run -a npm test
+>   if: runner.os == 'Linux'
+>
+> - name: Run tests
+>   run: npm test
+>   if: runner.os != 'Linux'
+> ```
+
+Следствие: CI-джоб для `test:integration` (стадия 03) на Linux-раннере обязан оборачивать команду
+в `xvfb-run -a`, иначе реальный запуск редактора (факт 54) не получит дисплей; macOS/Windows-раннеры
+в обёртке не нуждаются — источник условия читает `runner.os`, что типично для GitHub Actions
+(проект использует GitHub, не GitLab CI, где переменная называлась бы иначе, — сама подстановка
+`runner.os` не проверялась отдельно и специфична для примера, взятого из GitHub Actions workflow).
+
 ## Опровергнутые утверждения предыдущих ревизий
 
 Секция ведётся намеренно: план однажды уже построил на каждом из них решение.
@@ -536,3 +892,4 @@ for a change written by the extension's own `WorkspaceConfiguration.update()` ca
 | «`machine` = только user settings» | 3 | Факт 18: ещё и remote settings; цитата была взята из пункта `application` |
 | «`Terminal.shellIntegration` есть, но ненадёжен» | 3 | Факт 13: на планке 1.85 его нет вовсе |
 | «`fileMatch` — шаблон имени, а не путь» | 3 | Факт 17: принимает и глоб по пути; ограничение в другом — путь машинозависим |
+| «Кастомный контейнер `viewsContainers.activitybar` оставляет пустую иконку в Activity Bar, когда его единственный view скрыт `when`» | round 04 (claim к 03-C) | Факт 47: `hideIfEmpty: true` зашит безусловно для всех расширений в `registerCustomViewContainer`, и пересчёт реактивен — иконка гаснет вместе с view |
