@@ -30,12 +30,23 @@
     }
   },
   "activationEvents": [],
+  "contributes": {
+    "jsonValidation": [
+      {
+        "fileMatch": "projects-tree.rules.json",
+        "url": "./schemas/rules.schema.json"
+      }
+    ]
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "node esbuild.mjs",
     "build:prod": "node esbuild.mjs --prod",
     "copy:license": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
     "package": "pnpm run copy:license && pnpm run build:prod && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1"
   },
   "devDependencies": {
     "@types/vscode": "1.85.0",

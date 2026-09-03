@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/FractalizeR/vscode-extensions/packages/projects-tree/schemas/rules.schema.json",
+  "title": "ProjectsTree rules file",
+  "description": "Rules and version for projects-tree.rules.json — see docs/plans/projects-tree/00-overview.md, section 'Хранение правил'. This is the single structural source of truth: the extension's loader (src/projects/classification/rulesFile.ts) validates against this same file at runtime, it is not duplicated by hand.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "rules"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Rules file format version. An unrecognized value is rejected, not migrated silently."
+    },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/rule" }
+    }
+  },
+  "definitions": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "when", "then"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "when": { "$ref": "#/definitions/condition" },
+        "then": { "$ref": "#/definitions/partialVerdict" },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "condition": {
+      "oneOf": [
+        { "$ref": "#/definitions/conditionNameMatches" },
+        { "$ref": "#/definitions/conditionHasChild" },
+        { "$ref": "#/definitions/conditionDepth" },
+        { "$ref": "#/definitions/conditionPathMatches" },
+        { "$ref": "#/definitions/conditionPathEquals" },
+        { "$ref": "#/definitions/conditionInRoot" },
+        { "$ref": "#/definitions/conditionCombinator" }
+      ]
+    },
+    "conditionNameMatches": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "pattern"],
+      "properties": {
+        "kind": { "const": "nameMatches" },
+        "pattern": { "type": "string" },
+        "flags": { "type": "string" }
+      }
+    },
+    "conditionHasChild": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "names"],
+      "properties": {
+        "kind": { "const": "hasChild" },
+        "names": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "entryType": { "enum": ["file", "dir", "any"] }
+      }
+    },
+    "conditionDepth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "depth" },
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "conditionPathMatches": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "glob"],
+      "properties": {
+        "kind": { "const": "pathMatches" },
+        "glob": { "type": "string" },
+        "anchor": { "enum": ["root", "absolute"] }
+      }
+    },
+    "conditionPathEquals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "pathEquals" },
+        "path": { "type": "string" }
+      }
+    },
+    "conditionInRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "rootId"],
+      "properties": {
+        "kind": { "const": "inRoot" },
+        "rootId": { "type": "string" }
+      }
+    },
+    "conditionCombinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "of"],
+      "properties": {
+        "kind": { "enum": ["all", "any", "not"] },
+        "of": { "type": "array", "items": { "$ref": "#/definitions/condition" }, "minItems": 1 }
+      }
+    },
+    "highlightSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "labelHighlight": { "type": "boolean" },
+        "color": { "type": "string" },
+        "badge": { "type": "string", "maxLength": 2 },
+        "icon": { "type": "string" },
+        "description": { "type": "string" },
+        "sortWeight": { "type": "number" }
+      }
+    },
+    "partialVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skip": { "type": "boolean" },
+        "stopDescend": { "type": "boolean" },
+        "project": { "type": "boolean" },
+        "primaryAction": {
+          "description": "null means 'project, deliberately with no primary action' — distinct from omitting the key entirely.",
+          "type": ["string", "null"]
+        },
+        "highlight": {
+          "anyOf": [{ "$ref": "#/definitions/highlightSpec" }, { "type": "null" }]
+        },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

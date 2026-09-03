@@ -64,6 +64,10 @@ importers:
         version: 4.1.11(@types/node@26.4.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/projects-tree:
+    dependencies:
+      ajv:
+        specifier: ^8.17.1
+        version: 8.20.0
     devDependencies:
       '@types/vscode':
         specifier: 1.85.0
