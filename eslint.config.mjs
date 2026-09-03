@@ -13,7 +13,7 @@ export default tseslint.config(
       '**/out/**',
       '**/node_modules/**',
       '**/*.vsix',
-      '.vscode-test/**',
+      '**/.vscode-test/**',
       'tools/architecture-fixtures/**',
       'pnpm-lock.yaml',
     ],

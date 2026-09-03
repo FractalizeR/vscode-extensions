@@ -47,3 +47,51 @@ jobs:
           name: projects-tree-vsix
           path: packages/projects-tree/*.vsix
           if-no-files-found: error
+
+  # Separate job, not extra steps in `check`: these tests boot a real copy of the editor
+  # (api-facts.md, fact 54) and stay out of `pnpm check` for that reason (AGENTS.md, "Validation").
+  # Runs in parallel with `check` rather than depending on it: integration tests exercise the
+  # source tree directly, not the packaged .vsix, so there is nothing in `check` (nor its packaging
+  # step) they need to wait on — running them concurrently gets a red result back sooner. The
+  # tradeoff: on a commit that `check` would fail anyway, this job's CI minutes (dominated by the
+  # editor download, cached below) are spent regardless.
+  integration-test:
+    name: integration-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The editor download (api-facts.md, fact 54: `@vscode/test-electron` fetches a real VS Code
+      # build) is a ~300MB fetch that does not change between runs unless the pinned `version` in
+      # `.vscode-test.mjs` moves — caching it turns most runs into a cache hit instead of a repeat
+      # download. Keyed on OS only (this job runs on one runner OS), so a version bump simply adds
+      # a new version directory under the same cache key rather than invalidating it; the tradeoff
+      # is the cache slowly accumulating stale version directories, acceptable against the
+      # alternative of paying for the download on every run.
+      - name: Cache downloaded editor
+        uses: actions/cache@v4
+        with:
+          path: packages/projects-tree/.vscode-test
+          key: ${{ runner.os }}-vscode-test-electron
+
+      # api-facts.md, fact 55, quoted in full because the next reader who sees a green macOS/
+      # Windows runner reads this as bureaucracy and "simplifies" it away: microsoft/vscode-test's
+      # own sample CI runs `xvfb-run -a npm test` guarded by `if: runner.os == 'Linux'`, and the
+      # unguarded command on any other OS — the real editor build `@vscode/test-electron` launches
+      # (fact 54) needs a display server to open a window at all, which Linux CI runners do not
+      # have and macOS/Windows runners do not need this wrapper for.
+      - name: Run integration tests (xvfb-run -a on Linux — fact 55)
+        run: xvfb-run -a pnpm --filter projects-tree run test:integration

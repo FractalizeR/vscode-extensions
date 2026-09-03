@@ -3,7 +3,8 @@
   "ignore": ["tools/architecture-fixtures/**"],
   "workspaces": {
     "packages/projects-tree": {
-      "project": ["src/**/*.ts"]
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": ["@vscode/test-electron"]
     },
     "packages/projects-tree/webview": {
       "entry": ["src/main.ts"],

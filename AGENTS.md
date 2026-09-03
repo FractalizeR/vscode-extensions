@@ -7,8 +7,10 @@ decision); never to conform it to already-written code or to drop an inconvenien
 
 ## Layout
 
-Current: `packages/projects-tree/src/extension.ts` only — entry point, builds the object graph,
-registers contributions.
+Current: `extension.ts` plus `projects/{classification,discovery,actions}/` (the core) and
+`editor/{tree-view,decorations,commands,configuration}/` (the VS Code adapter). Integration tests
+live outside `src/`, in `packages/projects-tree/test/integration/`. Still absent from the target
+layout below: `editor/onboarding/` (stage 05) and `editor/rules-editor/` (stage 06).
 
 Target layout, introduced incrementally by `docs/plans/projects-tree/02-core.md` and
 `03-tree-view.md` (do not create these directories ahead of the stage that introduces them):
@@ -51,9 +53,17 @@ actual `check` chain (`tools/check-chain.test.ts`) — it drifted once already, 
 been added to the chain without being written down here.
 
 Integration tests (`@vscode/test-cli`) require a running editor and stay out of `pnpm check` for
-that reason; they run in their own CI job instead. Introduced by
-`docs/plans/projects-tree/03-tree-view.md` — the `test:integration` script and that job do not
-exist yet.
+that reason; they run in their own CI job instead — `pnpm --filter projects-tree test:integration`
+locally, the `integration-test` job in CI, which needs `xvfb-run -a` on Linux
+(`docs/plans/projects-tree/api-facts.md`, fact 55). Their tsconfig is `packages/projects-tree/test/
+tsconfig.json`, named so that ESLint's `projectService` finds it by walking up from each test file;
+renaming it to `tsconfig.test.json` makes the whole test tree unlintable.
+
+`@vscode/test-electron` is a direct devDependency of `packages/projects-tree` and is listed in
+`knip.json`'s `ignoreDependencies`. It looks unused — nothing imports it by name — but
+`@vscode/test-cli` resolves it at run time from the extension package's own directory, so removing
+it makes `test:integration` fail with `Can't resolve '@vscode/test-electron'`. Do not "clean it
+up"; knip cannot see a resolution another tool performs.
 
 ## api-facts.md
 

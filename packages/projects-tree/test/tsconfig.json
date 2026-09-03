@@ -1,0 +1,44 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // Integration tests run inside the editor's extension host under Mocha (api-facts.md, fact
+    // 53), which loads test files via CommonJS `require` — unlike the extension bundle (esbuild
+    // produces one CJS file from ESM-style sources), here every compiled file is loaded
+    // individually, so the *compiler* has to emit real CommonJS, not just target one. "NodeNext"
+    // module/moduleResolution (rather than the base config's "ESNext"/"Bundler") is what makes
+    // that emit CommonJS while still resolving this package's `.js`-suffixed relative specifiers
+    // (`from '../src/foo.js'`) against their `.ts` sources — "Bundler" resolution cannot pair with
+    // a CommonJs-emitting module setting, and plain "node" resolution does not do the
+    // `.js`-to-`.ts` mapping this repo's source style relies on.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // The package has no `"type": "module"` in its package.json (mine to change, not this
+    // config's) — under "NodeNext", TypeScript therefore treats every file here as CommonJS by
+    // file-extension/package.json detection, same as the rest of the package. `verbatimModuleSyntax`
+    // (inherited from tsconfig.base.json) forbids plain `import`/`export` syntax in a file TS has
+    // detected as CommonJS; overridden to `false` here so the ESM-style `import`/`export` source
+    // (matching the rest of `src/**`) still compiles down to `require()` calls instead of being
+    // rejected.
+    "verbatimModuleSyntax": false,
+    "types": ["node", "vscode", "mocha"],
+    // Named literally "tsconfig.json" and placed under test/, not "tsconfig.test.json" at the
+    // package root: eslint.config.mjs's typescript-eslint `projectService: true` only auto-
+    // discovers a file named exactly "tsconfig.json" by walking up from each linted file — a
+    // differently-named sibling config is invisible to it ("was not found by the project service"
+    // when tried). Living here, this file is the nearest tsconfig.json for every file under
+    // test/**, and eslint.config.mjs (not mine to edit) needs no change.
+    "rootDir": "..",
+    "outDir": "../out",
+    "noEmit": false
+  },
+  // "../src/**/*.ts" is included, not just imported ambiently: Node needs an actual compiled `.js`
+  // file on disk for every module a test imports (there is no bundling step here), so the
+  // provider, registry and discovery modules the tests drive directly must be emitted alongside
+  // the tests themselves, mirrored into `out/src/**`.
+  "include": ["../src/**/*.ts", "**/*.ts"],
+  // vitest's own unit test files (`../src/**/*.test.ts`) are excluded: they are ESM (top-level
+  // `await`, `import.meta.dirname`), written for `module: "ESNext"` (tsconfig.base.json) and
+  // vitest's own runner — compiling them as CommonJS here fails (TS1309, TS1470), and this suite
+  // never imports them anyway.
+  "exclude": ["../src/**/*.test.ts", "../src/**/*.spec.ts"]
+}

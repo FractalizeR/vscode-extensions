@@ -616,8 +616,33 @@ TreeItemCollapsibleState} of the tree item.» — не говорит о при�
 `new ThemeColor(id)`; отдельного «списка допустимых id» для сборки нет, doc-пример показывает свой
 же вклад как id. Расхождение имени настройки (`workspace.colorCustomization` вместо действующего
 `workbench.colorCustomizations`) уже зафиксировано фактом 32 и на эту строку не переносится.
-На планке 1.85.0: есть (`grep -n "constructor(id: string);" dts185.ts` → строка 894, класс
-`ThemeColor`, первое совпадение в файле).
+**На планке 1.85.0: конструктор есть, свойство `id` — НЕТ.** Ревизия этой строки, добавившая её в
+round 04, проверила доступность грепом по `constructor(id: string);` (строка 894 в `dts185.ts`) и
+распространила вердикт «есть» на всю строку, включая цитату `readonly id: string;`. Это неверно.
+`@types/vscode@1.85.0`, `index.d.ts:900-907` — весь класс целиком:
+> ```ts
+> export class ThemeColor {
+>
+> 	/**
+> 	 * Creates a reference to a theme color.
+> 	 * @param id of the color. The available colors are listed in https://code.visualstudio.com/api/references/theme-color.
+> 	 */
+> 	constructor(id: string);
+> }
+> ```
+
+Публичного члена `id` здесь нет; `readonly id: string;` появляется позже (есть в 1.134.0, строка
+928). Проверяется дословно:
+`grep -n -A 14 "export class ThemeColor" node_modules/.pnpm/@types+vscode@1.85.0/node_modules/@types/vscode/index.d.ts`
+
+Следствие для плана: `ThemeColor` на планке — **непрозрачный** объект. Его можно только
+конструировать; прочитать из него id нельзя ни в production-коде, ни в тесте. Пакет 03-B поймал это
+компилятором (`TS2339` в `decorationProvider.ts`), а не ревью, — то есть цена ошибки здесь оказалась
+низкой только потому, что планка проверяется машинно на каждом `typecheck`.
+
+**Урок для правила 4 этой таблицы:** вердикт о доступности обязан относиться к тому члену API, на
+который опирается решение, а не к соседнему члену того же класса. Грепа по конструктору
+недостаточно, если решение читает свойство.
 
 **44. `ThemeIcon` конструктор — `(id: string, color?: ThemeColor)`; переданный цвет применяется
 именно в `TreeItem`.** Тип: цитата. `vscode.d.ts:940-966`:
@@ -892,4 +917,5 @@ view, а не остаётся пустой рамкой. Явно провер�
 | «`machine` = только user settings» | 3 | Факт 18: ещё и remote settings; цитата была взята из пункта `application` |
 | «`Terminal.shellIntegration` есть, но ненадёжен» | 3 | Факт 13: на планке 1.85 его нет вовсе |
 | «`fileMatch` — шаблон имени, а не путь» | 3 | Факт 17: принимает и глоб по пути; ограничение в другом — путь машинозависим |
+| «`ThemeColor.id` доступен на планке 1.85» | round 04 (факт 43) | Класс на 1.85 объявляет только конструктор; `readonly id` появляется позже. Вердикт о доступности был снят грепом по конструктору, а опиралось решение на свойство |
 | «Кастомный контейнер `viewsContainers.activitybar` оставляет пустую иконку в Activity Bar, когда его единственный view скрыт `when`» | round 04 (claim к 03-C) | Факт 47: `hideIfEmpty: true` зашит безусловно для всех расширений в `registerCustomViewContainer`, и пересчёт реактивен — иконка гаснет вместе с view |
