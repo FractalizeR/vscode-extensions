@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": ["tools/architecture-fixtures/**"],
+  "workspaces": {
+    "packages/projects-tree": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/projects-tree/webview": {
+      "entry": ["src/main.ts"],
+      "project": ["src/**/*.ts"]
+    }
+  }
+}
