@@ -5,7 +5,7 @@
  * this file is the sole exception `.dependency-cruiser.mjs`'s `no-node-builtins-in-core-logic`
  * rule carves out of `src/projects/**`, so the rest of the core stays testable against a fake.
  */
-import { open, readdir, stat } from 'node:fs/promises';
+import { open, readdir, realpath, stat } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import type { DirEntry } from '../classification/index.js';
 
@@ -25,6 +25,13 @@ export interface FileSystemReader {
   directory it descends into and refuses to descend into one already seen.
   */
   identity(path: string): Promise<string>;
+  /**
+  The canonical absolute path `path` resolves to, with every symlink on the way (including
+  `path` itself) followed — package 02-E's defense against a declared submodule path that is, or
+  passes through, a symlink pointing outside the project (`resolveSegments` in `descend.ts` only
+  rejects lexically-escaping paths; a symlink escapes without ever writing `../` anywhere).
+  */
+  realPath(path: string): Promise<string>;
 }
 
 export type FileSystemErrorCode = 'notFound' | 'notDirectory' | 'permissionDenied' | 'other';
@@ -74,6 +81,10 @@ export function createNodeFileSystemReader(): FileSystemReader {
     async identity(path) {
       const stats = await guarded(stat(path), path);
       return identityOf(stats);
+    },
+
+    async realPath(path) {
+      return guarded(realpath(path), path);
     },
   };
 }

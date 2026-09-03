@@ -166,6 +166,36 @@ describe('pathMatches', () => {
     expect(isConditionMet(condition, facts({ pathFromRoot: 'libs/foo' }))).toBe(true);
   });
 
+  it('does not match past a segment boundary when ** is trailing', () => {
+    // Regression: `libs(?:.*/)?` (the pre-fix middle-** fragment reused here) would have matched
+    // 'libsX' as a bare prefix — `**` must match whole segments only.
+    const condition: Condition = { kind: 'pathMatches', glob: 'libs/**' };
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'libsX' }))).toBe(false);
+  });
+
+  it('does not match past a segment boundary when ** is in the middle', () => {
+    // Regression: `libs(?:.*/)?src` (the actual pre-fix compiled form) matched 'libsX/src' and
+    // 'libs-extra/a/src' — ** swallowed the boundary slash instead of requiring the preceding and
+    // following literals to each be whole segments.
+    const condition: Condition = { kind: 'pathMatches', glob: 'libs/**/src' };
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'libsX/src' }))).toBe(false);
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'libs-extra/a/src' }))).toBe(false);
+    // Zero '**' segments must still require the separating slash — not merge the two literals.
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'libssrc' }))).toBe(false);
+  });
+
+  it('does not match past a segment boundary when ** is leading', () => {
+    const condition: Condition = { kind: 'pathMatches', glob: '**/b' };
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'ab' }))).toBe(false);
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'aXb' }))).toBe(false);
+  });
+
+  it('generalizes the segment-boundary regression from a/**/b vs aXX/b', () => {
+    const condition: Condition = { kind: 'pathMatches', glob: 'a/**/b' };
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'aXX/b' }))).toBe(false);
+    expect(isConditionMet(condition, facts({ pathFromRoot: 'a/b' }))).toBe(true);
+  });
+
   it('anchors on absolutePath, normalized to forward slashes, when anchor is "absolute"', () => {
     const condition: Condition = {
       kind: 'pathMatches',

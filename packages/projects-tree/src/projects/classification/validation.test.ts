@@ -39,6 +39,22 @@ describe('validateRules', () => {
     expect(validateRules(rules, [])).toEqual([]);
   });
 
+  it('reports an uncompilable pattern as a diagnostic instead of letting it throw later', () => {
+    // Regression: an invalid pattern used to pass validation with zero diagnostics and only throw
+    // a SyntaxError once `compileCondition` ran, later, during a walk.
+    const rules = [rule({ when: { kind: 'nameMatches', pattern: '(' } })];
+    expect(() => validateRules(rules, [])).not.toThrow();
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(expect.objectContaining({ path: '/rules/0/when/pattern' }));
+  });
+
+  it('reports an uncompilable flags string as a diagnostic', () => {
+    const rules = [rule({ when: { kind: 'nameMatches', pattern: '^src$', flags: 'q' } })];
+    expect(() => validateRules(rules, [])).not.toThrow();
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(expect.objectContaining({ path: '/rules/0/when/pattern' }));
+  });
+
   it('reports an unsafe regex inside nameMatches, with a path into the rule', () => {
     const rules = [rule({ when: { kind: 'nameMatches', pattern: '(a+)+' } })];
     const diagnostics = validateRules(rules, []);
@@ -74,6 +90,26 @@ describe('validateRules', () => {
   it('accepts a two-character badge', () => {
     const rules = [rule({ verdict: { highlight: { badge: 'AB' } } })];
     expect(validateRules(rules, [])).toEqual([]);
+  });
+
+  it('accepts a single-emoji badge, a surrogate pair counted as one code point', () => {
+    // Regression: `.length` counts UTF-16 code units, so '🔥' (`.length === 2`) used to be
+    // rejected even though VS Code's own check (api-facts.md fact 7) accepts it as one character.
+    const rules = [rule({ verdict: { highlight: { badge: '🔥' } } })];
+    expect(validateRules(rules, [])).toEqual([]);
+  });
+
+  it('accepts a two-emoji badge — two code points, four UTF-16 units', () => {
+    const rules = [rule({ verdict: { highlight: { badge: '🔥🔥' } } })];
+    expect(validateRules(rules, [])).toEqual([]);
+  });
+
+  it('rejects a three-emoji badge — three code points is over the limit even by code points', () => {
+    const rules = [rule({ verdict: { highlight: { badge: '🔥🔥🔥' } } })];
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/then/highlight/badge' }),
+    );
   });
 
   it('reports an entirely empty highlight object', () => {

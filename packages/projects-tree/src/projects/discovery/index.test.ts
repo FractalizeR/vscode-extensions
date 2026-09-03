@@ -17,6 +17,7 @@ import {
   type DescendDiagnosticKind,
   type DescendResult,
   type DescendStrategy,
+  type DiscoverDiagnostic,
   type DiscoverOptions,
   type DiscoverResult,
   type DiscoveryRoot,
@@ -68,6 +69,7 @@ describe('discovery/index — public surface', () => {
       readDirectory: () => Promise.reject(new FileSystemError('notFound', 'no such path')),
       readFile: () => Promise.reject(new Error('unused')),
       identity: () => Promise.reject(new Error('unused')),
+      realPath: () => Promise.reject(new Error('unused')),
     };
 
     const result: DiscoverResult = await discoverProjectTree(
@@ -79,9 +81,11 @@ describe('discovery/index — public surface', () => {
     );
 
     const nodes: readonly ClassifiedNode[] = result.nodes;
-    const diagnostics: readonly WalkDiagnostic[] = result.diagnostics;
+    const diagnostics: readonly DiscoverDiagnostic[] = result.diagnostics;
     expect(nodes).toEqual([]);
-    const kind: WalkDiagnosticKind | undefined = diagnostics[0]?.kind;
+    // A missing root can only ever produce a walker-side diagnostic, never a descend-strategy one.
+    const [walkDiagnostic]: readonly WalkDiagnostic[] = diagnostics as readonly WalkDiagnostic[];
+    const kind: WalkDiagnosticKind | undefined = walkDiagnostic?.kind;
     expect(kind).toBe('notFound');
   });
 
@@ -101,6 +105,7 @@ describe('discovery/index — public surface', () => {
         depthFromRoot: 0,
         entries: [],
       },
+      entriesRead: true,
       verdict: {
         skip: { value: false, byRule: undefined },
         stopDescend: { value: false, byRule: undefined },
@@ -112,14 +117,18 @@ describe('discovery/index — public surface', () => {
       children: [],
     };
     const fakeFs: FileSystemReader = {
-      readDirectory: () => Promise.reject(new Error('unused')),
+      readDirectory: (path) =>
+        path === '/work/project/lib'
+          ? Promise.resolve([])
+          : Promise.reject(new FileSystemError('notFound', `no such path: ${path}`)),
       readFile: (path) =>
         path === '/work/project/.gitmodules'
           ? Promise.resolve('[submodule "lib"]\n\tpath = lib\n')
           : Promise.reject(new FileSystemError('notFound', `no such path: ${path}`)),
-      identity: (path) =>
-        path === '/work/project/lib'
-          ? Promise.resolve('id-lib')
+      identity: () => Promise.reject(new Error('unused')),
+      realPath: (path) =>
+        path === '/work/project' || path === '/work/project/lib'
+          ? Promise.resolve(path)
           : Promise.reject(new FileSystemError('notFound', `no such path: ${path}`)),
     };
     const context: DescendContext = {
@@ -154,6 +163,7 @@ describe('discovery/index — public surface', () => {
         depthFromRoot: 0,
         entries: [],
       },
+      entriesRead: true,
       verdict: {
         skip: { value: false, byRule: undefined },
         stopDescend: { value: false, byRule: undefined },
@@ -168,6 +178,7 @@ describe('discovery/index — public surface', () => {
       readDirectory: () => Promise.reject(new Error('unused')),
       readFile: () => Promise.resolve('[submodule]\n'), // no quoted name — malformed
       identity: () => Promise.reject(new Error('unused')),
+      realPath: () => Promise.reject(new Error('unused')),
     };
     const context: DescendContext = {
       fs: fakeFs,

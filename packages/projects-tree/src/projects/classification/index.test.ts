@@ -21,6 +21,8 @@ import {
   type LoadedRulesFile,
   type NodeFacts,
   type PartialVerdict,
+  type RawActionDefinition,
+  type RawActionSpec,
   type RawPartialVerdict,
   type RawRule,
   type RawRulesFile,
@@ -100,7 +102,9 @@ describe('classification/index — public surface', () => {
   });
 
   it('exposes loadRulesFile/toRawRulesFile/checkExternalModification — the rules file load path', () => {
-    const raw: RawRulesFile = toRawRulesFile(DEFAULT_RULES, CURRENT_RULES_FILE_VERSION);
+    const actionSpec: RawActionSpec = { kind: 'openFolder', window: 'current' };
+    const actions: RawActionDefinition[] = [{ id: 'a1', spec: actionSpec }];
+    const raw: RawRulesFile = toRawRulesFile(DEFAULT_RULES, actions, CURRENT_RULES_FILE_VERSION);
     const [rawRule]: readonly RawRule[] = raw.rules;
     const rawVerdict: RawPartialVerdict | undefined = rawRule?.then;
     expect(rawVerdict?.project).toBe(true);
@@ -109,6 +113,7 @@ describe('classification/index — public surface', () => {
     const loaded: LoadedRulesFile | undefined = result.file;
     expect(loaded?.version).toBe(CURRENT_RULES_FILE_VERSION);
     expect(loaded?.rules).toHaveLength(DEFAULT_RULES.length);
+    expect(loaded?.actions).toEqual(actions);
 
     expect(checkExternalModification(1, 1)).toBeUndefined();
   });

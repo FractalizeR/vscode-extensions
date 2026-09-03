@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   render,
+  renderArgs,
+  renderCommandArgs,
   RenderError,
   encodeForUri,
   quoteForShell,
@@ -57,5 +59,16 @@ describe('actions/index — public surface', () => {
     const spec: ActionSpec = { kind: 'openFolder', window: 'auto' };
     const action: ActionDefinition = { id: 'open', spec };
     expect(action.spec).toEqual(spec);
+  });
+
+  it('exposes renderArgs and renderCommandArgs, rendering ActionSpec.process/command args through the barrel', () => {
+    const node: ActionRenderNode = {
+      path: '/work/my-project',
+      name: 'my-project',
+      parentPath: '/work',
+      rootPath: '/work',
+    };
+    expect(renderArgs(['${path}', 'fixed'], node)).toEqual(['/work/my-project', 'fixed']);
+    expect(renderCommandArgs(['${path}', 42], node)).toEqual(['/work/my-project', 42]);
   });
 });

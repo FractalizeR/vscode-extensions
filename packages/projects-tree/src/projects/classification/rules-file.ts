@@ -40,14 +40,58 @@ export interface RawPartialVerdict {
   tags?: readonly string[];
 }
 
+/**
+ * The `spec` union of one action definition, as it appears in the canonical rules file. Structurally
+ * mirrors `src/projects/actions/action.ts`'s `ActionSpec` — that type cannot be imported here
+ * (`actions/` is a sibling package developed in parallel, and `classification/` may not depend on
+ * it; see `validateRules`'s doc comment for the same boundary applied to `primaryAction`
+ * references). Reconciling the two into one shared type is deferred to stage 04; until then this is
+ * a second, hand-written copy of the shape, kept honest only by `rules.schema.json`'s
+ * `actionSpec*` definitions and this module's own tests.
+ */
+export type RawActionSpec =
+  | { kind: 'openFolder'; window: 'current' | 'new' | 'auto' }
+  | {
+      kind: 'terminal';
+      command: string;
+      shell: 'zsh' | 'bash' | 'powershell' | 'cmd';
+      execute?: boolean;
+      cwd?: string;
+      terminalName?: string;
+    }
+  | { kind: 'process'; command: string; args: readonly string[] }
+  | { kind: 'uri'; template: string }
+  | { kind: 'command'; commandId: string; args?: readonly unknown[] };
+
+/**
+ * One action definition as it appears in the canonical rules file — the place a `then.primaryAction`
+ * reference (validated by `validateRules`) is declared. See `RawActionSpec`'s doc comment for why
+ * this is a local copy of `actions/action.ts`'s `ActionDefinition` rather than an import.
+ */
+export interface RawActionDefinition {
+  id: string;
+  title?: string;
+  appliesTo?: Condition;
+  spec: RawActionSpec;
+}
+
 export interface RawRulesFile {
   version: number;
   rules: readonly RawRule[];
+  /**
+  Optional: a rules file with no custom actions omits this entirely rather than carrying `[]`.
+  */
+  actions?: readonly RawActionDefinition[];
 }
 
 export interface LoadedRulesFile {
   version: number;
   rules: readonly Rule[];
+  /**
+  Always present, `[]` when the file declared none — unlike `RawRulesFile.actions`, which is
+  optional on disk, callers of a *loaded* file get a stable array to iterate without a null check.
+  */
+  actions: readonly RawActionDefinition[];
 }
 
 export interface RulesFileLoadResult {
@@ -70,11 +114,17 @@ const validateStructure: ValidateFunction<RawRulesFile> = ajv.compile<RawRulesFi
 /**
  * Parses, structurally validates (against `rules.schema.json`, via `ajv`), maps `then` to `verdict`,
  * and domain-validates (`validation.ts`: regex complexity, `primaryAction` references, duplicate
- * ids, highlight shape) the content of a rules file. Does not read the file itself — `content` is a
- * parameter, not a path: the core is not allowed to import `fs` (docs/plans/projects-tree/02-core.md,
- * "ЖЁСТКИЕ ПРАВИЛА"; enforced by dependency-cruiser's `no-node-builtins-in-core-logic`). Reading the
- * file, and detecting external modification via `mtime` (see `checkExternalModification` below), is
- * the editor adapter's job (stage 03).
+ * rule ids, highlight shape; plus this function's own duplicate-action-id check) the content of a
+ * rules file. Does not read the file itself — `content` is a parameter, not a path: the core is not
+ * allowed to import `fs` (docs/plans/projects-tree/02-core.md, "ЖЁСТКИЕ ПРАВИЛА"; enforced by
+ * dependency-cruiser's `no-node-builtins-in-core-logic`). Reading the file, and detecting external
+ * modification via `mtime` (see `checkExternalModification` below), is the editor adapter's job
+ * (stage 03).
+ *
+ * `knownActionIds` names ids that are valid `primaryAction` references *besides* the ones this file
+ * declares in its own `actions` section — built-in actions the caller wires in from outside the
+ * file, for instance. A `primaryAction` may reference either set; the file's own declared actions
+ * need no separate entry in `knownActionIds` to be referenceable.
  */
 export function loadRulesFile(
   content: string,
@@ -95,13 +145,37 @@ export function loadRulesFile(
     };
   }
 
+  const declaredActions = parsed.actions ?? [];
   const rules = parsed.rules.map((raw) => toInternalRule(raw));
-  const domainDiagnostics = validateRules(rules, knownActionIds);
+  const domainDiagnostics = [
+    ...validateActionIds(declaredActions),
+    ...validateRules(rules, [...knownActionIds, ...declaredActions.map((action) => action.id)]),
+  ];
   if (domainDiagnostics.length > 0) {
     return { file: undefined, diagnostics: domainDiagnostics };
   }
 
-  return { file: { version: parsed.version, rules }, diagnostics: [] };
+  return { file: { version: parsed.version, rules, actions: declaredActions }, diagnostics: [] };
+}
+
+/**
+ * Duplicate action ids are this module's own check, not `validation.ts`'s: `validateRules` operates
+ * on the internal `Rule[]`/`primaryAction`-reference shape, while `actions` is raw on-disk data this
+ * module never converts to an internal type (see `RawActionSpec`'s doc comment).
+ */
+function validateActionIds(actions: readonly RawActionDefinition[]): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  const seenIds = new Set<string>();
+  for (const [index, action] of actions.entries()) {
+    if (seenIds.has(action.id)) {
+      diagnostics.push({
+        path: `/actions/${String(index)}/id`,
+        message: `duplicate action id "${action.id}"`,
+      });
+    }
+    seenIds.add(action.id);
+  }
+  return diagnostics;
 }
 
 /**
@@ -112,9 +186,14 @@ export function loadRulesFile(
  */
 export function toRawRulesFile(
   rules: readonly Rule[],
+  actions: readonly RawActionDefinition[] = [],
   version = CURRENT_RULES_FILE_VERSION,
 ): RawRulesFile {
-  return { version, rules: rules.map((rule) => toRawRule(rule)) };
+  return {
+    version,
+    rules: rules.map((rule) => toRawRule(rule)),
+    ...(actions.length > 0 && { actions }),
+  };
 }
 
 /**

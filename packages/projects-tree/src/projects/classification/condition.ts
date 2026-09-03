@@ -119,10 +119,12 @@ function toPosixPath(value: string): string {
 
 /**
  * Minimal glob support for `pathMatches`: `*` matches within one path segment, `**` as a whole
- * segment matches zero or more segments — the standard `.gitignore`/minimatch meaning, so
- * `a/**\/b` matches `a/b` as well as `a/x/b` and `a/x/y/b` — `?` matches one character within a
- * segment. No brace/character-class syntax — not needed by any case in the plan, and every
- * unrecognized character is matched literally rather than silently accepted as a wildcard.
+ * segment matches zero or more *whole* segments — the standard `.gitignore`/minimatch meaning, so
+ * `a/**\/b` matches `a/b` as well as `a/x/b` and `a/x/y/b`, but never `ab` or `aQ/b` — `**` never
+ * absorbs part of a neighboring literal segment, only the `/` that separates whole segments.
+ * `?` matches one character within a segment. No brace/character-class syntax — not needed by any
+ * case in the plan, and every unrecognized character is matched literally rather than silently
+ * accepted as a wildcard.
  */
 function globToRegExp(glob: string): RegExp {
   // null marks a '**' segment; every other segment is pre-converted to its regex fragment so the
@@ -135,20 +137,35 @@ function globToRegExp(glob: string): RegExp {
   for (const [index, part] of parts.entries()) {
     const isFirst = index === 0;
     const isLast = index === parts.length - 1;
+    // Whether the *previous* part was itself a '**' — when it was, it already owns the separating
+    // slash on this side (see below), so this part must not emit a second one.
+    const isPrevStar = !isFirst && parts[index - 1] === null;
+
     if (part === null) {
-      // '**' swallows its own boundary slash(es) as part of the optional group, so the adjacent
-      // literal segments below never emit a '/' next to one — see the cases traced in the
-      // function doc comment's examples.
+      // A '**' spanning the whole glob matches anything, including nothing. A trailing '**' (with
+      // something before it) owns the boundary slash on its *leading* side — the fragment
+      // `libs/**` already relied on this. Everywhere else — including a leading '**' — it owns the
+      // boundary slash on its *trailing* side instead, and (when something precedes it) that
+      // leading side is filled in explicitly below, exactly like a literal segment would.
+      //
+      // The two styles must never both be skipped for the same '**': that is the pre-fix defect —
+      // a middle '**' owned only a trailing slash and no leading one was ever inserted, so
+      // `libs(?:.*/)?src` matched `libsX/src` (the literal segment before it became a prefix
+      // instead of a whole segment) and even `libssrc` (zero segments merging both literals with
+      // no separator at all).
       if (isFirst && isLast) {
         pattern += '.*';
-      } else if (isLast) {
-        pattern += '(?:/.*)?';
-      } else {
-        pattern += '(?:.*/)?';
+        continue;
       }
+      if (isLast) {
+        pattern += '(?:/.*)?';
+        continue;
+      }
+      if (!isFirst && !isPrevStar) pattern += '/';
+      pattern += '(?:.*/)?';
       continue;
     }
-    if (!isFirst && parts[index - 1] !== null) {
+    if (!isFirst && !isPrevStar) {
       pattern += '/';
     }
     pattern += part;

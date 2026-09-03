@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RenderError, type RenderTarget } from './action';
-import { render, type ActionRenderNode } from './render';
+import { render, renderArgs, renderCommandArgs, type ActionRenderNode } from './render';
 
 function node(overrides: Partial<ActionRenderNode> = {}): ActionRenderNode {
   return {
@@ -36,14 +36,14 @@ describe('render — literal template text is never quoted', () => {
   });
 });
 
-describe('render — value with a newline is always rejected', () => {
+describe('render — value with a control character is always rejected', () => {
   it('rejects "${name}" containing a newline regardless of target — a directory named across two lines must not become two commands', () => {
     // Regression: terminal.execute defaults to false (a rendered command is inserted, not run —
     // api-facts.md fact 11), which is the main defense against a hostile directory name. A "\n"
     // inside a substituted value defeats that defense by acting as the Enter-press the user never
     // made, executing everything before it regardless of `execute` or of how well the rest of the
     // value was quoted.
-    const hostile = node({ name: 'innocuous\nrm -rf ~' });
+    const hostile = node({ name: `innocuous${String.fromCodePoint(10)}rm -rf ~` });
 
     expect(() => render('open ${name}', hostile, SHELL)).toThrow(RenderError);
     try {
@@ -51,19 +51,59 @@ describe('render — value with a newline is always rejected', () => {
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(RenderError);
-      expect((error as RenderError).reason).toBe('newlineInValue');
+      expect((error as RenderError).reason).toBe('controlCharacterInValue');
     }
   });
 
   it('rejects a value containing a CRLF line ending the same way', () => {
-    const hostile = node({ path: '/tmp/a\r\nb' });
+    const hostile = node({ path: `/tmp/a${String.fromCodePoint(13, 10)}b` });
     expect(() => render('${path}', hostile, SHELL)).toThrow(RenderError);
   });
 
   it('rejects the newline independently of the render target (uri, literal)', () => {
-    const hostile = node({ name: 'a\nb' });
+    const hostile = node({ name: `a${String.fromCodePoint(10)}b` });
     expect(() => render('${name}', hostile, URI)).toThrow(RenderError);
     expect(() => render('${name}', hostile, LITERAL)).toThrow(RenderError);
+  });
+
+  it(
+    'rejects a value containing a lone CR with no accompanying LF — regression for review-05 ' +
+      'HIGH finding claude-01 / codex-12: an earlier version checked only value.includes(LF), ' +
+      'which a bare CR does not contain, letting a directory named "a<CR>whoami" through. A ' +
+      "terminal's pty treats a bare CR as Enter (icrnl in canonical mode) exactly like LF does, so " +
+      'this is a second Enter-press the user never made, defeating terminal.execute defaulting to ' +
+      'false the same way a literal newline would — independent of shell quoting, which never ' +
+      "sees the pty's line discipline at all.",
+    () => {
+      const hostile = node({ name: `a${String.fromCodePoint(13)}whoami` });
+
+      expect(() => render('cd ${name}', hostile, SHELL)).toThrow(RenderError);
+      try {
+        render('cd ${name}', hostile, SHELL);
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(RenderError);
+        expect((error as RenderError).reason).toBe('controlCharacterInValue');
+      }
+    },
+  );
+
+  it('rejects every C0 control character (U+0000-U+001F) and DEL (U+007F) individually', () => {
+    const codePoints = [...Array.from({ length: 0x20 }, (_unused, index) => index), 0x7f];
+    for (const codePoint of codePoints) {
+      const hostile = node({ name: `a${String.fromCodePoint(codePoint)}b` });
+      expect(
+        () => render('${name}', hostile, SHELL),
+        `code point 0x${codePoint.toString(16)} should be rejected`,
+      ).toThrow(RenderError);
+    }
+  });
+
+  it('does not reject ordinary unicode names — Cyrillic, emoji, and CJK all pass through unchanged', () => {
+    for (const name of ['проект', '🚀 launch', '目录名', 'проект 🚀 目录']) {
+      const withUnicodeName = node({ name });
+      expect(render('${name}', withUnicodeName, LITERAL)).toBe(name);
+    }
   });
 });
 
@@ -146,5 +186,50 @@ describe('render — shell target actually quotes a hostile substituted value', 
     const hostile = node({ name: 'proj; rm -rf ~' });
     const result = render('cd ${name}', hostile, SHELL);
     expect(result).toBe("cd 'proj; rm -rf ~'");
+  });
+});
+
+describe('renderArgs — ActionSpec.process.args', () => {
+  // Regression for review-05 MEDIUM finding codex-07: `render` covered `terminal.command` and
+  // `uri.template` but had no entry point for `process.args`, even though the same five
+  // `${...}` substitutions can appear there — args reached the child process's argv with no
+  // control-character rejection at all.
+  it('renders each element against node, target literal — no quoting, since argv never passes through a shell', () => {
+    const n = node({ path: '/tmp/my project', name: 'my project' });
+    expect(renderArgs(['--path=${path}', 'fixed', '${name}'], n)).toEqual([
+      '--path=/tmp/my project',
+      'fixed',
+      'my project',
+    ]);
+  });
+
+  it('rejects a control character in an arg exactly like render does for a shell command', () => {
+    const hostile = node({ name: `a${String.fromCodePoint(13)}whoami` });
+    expect(() => renderArgs(['${name}'], hostile)).toThrow(RenderError);
+  });
+
+  it('throws for an unknown variable inside an arg, not an empty substitution', () => {
+    expect(() => renderArgs(['${bogus}'], node())).toThrow(RenderError);
+  });
+});
+
+describe('renderCommandArgs — ActionSpec.command.args', () => {
+  // Regression for review-05 MEDIUM finding codex-07 — same gap as renderArgs, for the
+  // `vscode.commands.executeCommand` argument list instead of a child process's argv.
+  it('renders string elements against node, target literal, and leaves non-string elements untouched', () => {
+    const n = node({ path: '/tmp/my project' });
+    const args: readonly unknown[] = ['${path}', 42, true, null, { nested: 'unchanged' }];
+    expect(renderCommandArgs(args, n)).toEqual([
+      '/tmp/my project',
+      42,
+      true,
+      null,
+      { nested: 'unchanged' },
+    ]);
+  });
+
+  it('rejects a control character in a string arg exactly like render does', () => {
+    const hostile = node({ name: `a${String.fromCodePoint(13)}whoami` });
+    expect(() => renderCommandArgs(['${name}'], hostile)).toThrow(RenderError);
   });
 });

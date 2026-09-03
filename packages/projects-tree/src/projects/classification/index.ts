@@ -19,6 +19,8 @@ export {
   toRawRulesFile,
   CURRENT_RULES_FILE_VERSION,
   type LoadedRulesFile,
+  type RawActionDefinition,
+  type RawActionSpec,
   type RawPartialVerdict,
   type RawRule,
   type RawRulesFile,

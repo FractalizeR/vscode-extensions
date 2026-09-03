@@ -80,6 +80,30 @@ const INVALID_FIXTURES: readonly { readonly name: string; readonly body: unknown
     name: 'unrecognized version',
     body: { version: 2, rules: [] },
   },
+  {
+    name: 'action with an unknown kind',
+    body: {
+      version: 1,
+      rules: [],
+      actions: [{ id: 'a1', spec: { kind: 'bogus' } }],
+    },
+  },
+  {
+    name: 'action missing a required key (terminal spec without shell)',
+    body: {
+      version: 1,
+      rules: [],
+      actions: [{ id: 'a1', spec: { kind: 'terminal', command: 'ls' } }],
+    },
+  },
+  {
+    name: 'action spec with an extra property, rejected by additionalProperties: false',
+    body: {
+      version: 1,
+      rules: [],
+      actions: [{ id: 'a1', spec: { kind: 'openFolder', window: 'current', bogus: true } }],
+    },
+  },
 ];
 
 describe('rules.schema.json, validated directly by a fresh ajv instance', () => {
@@ -176,6 +200,23 @@ describe('loadRulesFile', () => {
     );
   });
 
+  it('rejects an uncompilable regex pattern with a diagnostic, not a throw, and does not load a file', () => {
+    // Regression: this used to load with zero diagnostics, leaving a SyntaxError to surface much
+    // later — out of `compileCondition`, during a walk — instead of at load time.
+    const content = JSON.stringify({
+      version: 1,
+      rules: [{ id: 'r1', when: { kind: 'nameMatches', pattern: '(' }, then: { skip: true } }],
+    });
+    let result: ReturnType<typeof loadRulesFile> | undefined;
+    expect(() => {
+      result = loadRulesFile(content, []);
+    }).not.toThrow();
+    expect(result?.file).toBeUndefined();
+    expect(result?.diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/when/pattern' }),
+    );
+  });
+
   it('accepts the same reference once the action id is known', () => {
     const content = JSON.stringify({
       version: 1,
@@ -189,6 +230,82 @@ describe('loadRulesFile', () => {
     });
     const result = loadRulesFile(content, ['known-action']);
     expect(result.diagnostics).toEqual([]);
+  });
+
+  describe('actions declared in the canonical file', () => {
+    // Regression: before this fix, RawRulesFile had no `actions` key at all — a user had nowhere
+    // to declare a custom action, and `primaryAction` could only ever reference an id the *caller*
+    // supplied from outside the file.
+    it('lets a rule reference an action declared in the same file, with no external knownActionIds', () => {
+      const content = JSON.stringify({
+        version: 1,
+        rules: [
+          {
+            id: 'r1',
+            when: { kind: 'nameMatches', pattern: '^x$' },
+            then: { project: true, primaryAction: 'open-terminal' },
+          },
+        ],
+        actions: [
+          {
+            id: 'open-terminal',
+            spec: { kind: 'terminal', command: 'echo hi', shell: 'zsh' },
+          },
+        ],
+      });
+      const result = loadRulesFile(content, []);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.file?.actions).toHaveLength(1);
+    });
+
+    it('still rejects a reference to neither a declared action nor a knownActionIds entry', () => {
+      const content = JSON.stringify({
+        version: 1,
+        rules: [
+          {
+            id: 'r1',
+            when: { kind: 'nameMatches', pattern: '^x$' },
+            then: { project: true, primaryAction: 'no-such-action' },
+          },
+        ],
+        actions: [
+          { id: 'open-terminal', spec: { kind: 'terminal', command: 'echo hi', shell: 'zsh' } },
+        ],
+      });
+      const result = loadRulesFile(content, []);
+      expect(result.file).toBeUndefined();
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ path: '/rules/0/then/primaryAction' }),
+      );
+    });
+
+    it('reports a duplicate action id', () => {
+      const content = JSON.stringify({
+        version: 1,
+        rules: [],
+        actions: [
+          { id: 'dup', spec: { kind: 'openFolder', window: 'current' } },
+          { id: 'dup', spec: { kind: 'openFolder', window: 'new' } },
+        ],
+      });
+      const result = loadRulesFile(content, []);
+      expect(result.file).toBeUndefined();
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({ path: '/actions/1/id' }));
+    });
+
+    it('loads with an empty actions array when the file declares none', () => {
+      const result = loadRulesFile(JSON.stringify(VALID_MINIMAL), []);
+      expect(result.file?.actions).toEqual([]);
+    });
+
+    it('round-trips declared actions through toRawRulesFile', () => {
+      const actions = [{ id: 'a1', spec: { kind: 'openFolder', window: 'current' } as const }];
+      const raw = toRawRulesFile(DEFAULT_RULES, actions);
+      expect(raw.actions).toEqual(actions);
+      const result = loadRulesFile(JSON.stringify(raw), []);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.file?.actions).toEqual(actions);
+    });
   });
 });
 

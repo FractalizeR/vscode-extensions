@@ -20,7 +20,7 @@ type FakeNode =
       readonly children: Readonly<Record<string, FakeNode>>;
       readonly denyRead?: boolean;
     }
-  | { readonly type: 'file' }
+  | { readonly type: 'file'; readonly content?: string }
   | { readonly type: 'symlink'; readonly target: string };
 
 type ResolvedNode = Exclude<FakeNode, { readonly type: 'symlink' }>;
@@ -137,8 +137,13 @@ class FakeFileSystem implements FileSystemReader {
     }
   }
 
-  readFile(): Promise<string> {
-    return Promise.reject(new Error('not used by these tests'));
+  async readFile(path: string, maxBytes: number): Promise<string> {
+    await Promise.resolve();
+    const node = this.#resolveFollowingSymlinks(path);
+    if (node?.type !== 'file') {
+      throw new FileSystemError('notFound', `no such file or directory: ${path}`);
+    }
+    return (node.content ?? '').slice(0, maxBytes);
   }
 
   async identity(path: string): Promise<string> {
@@ -148,6 +153,20 @@ class FakeFileSystem implements FileSystemReader {
       throw new FileSystemError('notFound', `no such file or directory: ${path}`);
     }
     return this.#idOf(node);
+  }
+
+  /**
+  Symlink-unaware on purpose: nothing in this file declares a submodule path through a symlink, so
+  a plain existence check is enough — the symlink/containment case is covered at the unit level by
+  descend.test.ts, against a fake built for exactly that.
+  */
+  async realPath(path: string): Promise<string> {
+    await Promise.resolve();
+    const node = this.#resolveFollowingSymlinks(path);
+    if (!node) {
+      throw new FileSystemError('notFound', `no such file or directory: ${path}`);
+    }
+    return path === '' ? '/' : path;
   }
 
   /**
@@ -172,8 +191,8 @@ function dir(children: Readonly<Record<string, FakeNode>> = {}, shouldDenyRead =
     ? { type: 'dir', children, denyRead: shouldDenyRead }
     : { type: 'dir', children };
 }
-function file(): FakeNode {
-  return { type: 'file' };
+function file(content?: string): FakeNode {
+  return content === undefined ? { type: 'file' } : { type: 'file', content };
 }
 function symlink(target: string): FakeNode {
   return { type: 'symlink', target };
@@ -204,9 +223,8 @@ function flatten(nodes: readonly ClassifiedNode[]): ClassifiedNode[] {
 }
 
 describe('discoverProjectTree — traversal of a test tree', () => {
-  it('produces the expected set of nodes, honoring skip and stopDescend', async () => {
-    const projectSrc = dir({ 'main.ts': file() });
-    const projectA = dir({ '.git': dir(), src: projectSrc });
+  it('produces the expected set of nodes, honoring skip', async () => {
+    const projectA = dir({ '.git': dir() });
     const nodeModulesPkg = dir({ 'index.js': file() });
     const nodeModules = dir({ 'some-pkg': nodeModulesPkg });
     const docs = dir({ 'readme.md': file() });
@@ -226,14 +244,44 @@ describe('discoverProjectTree — traversal of a test tree', () => {
 
     expect(result.diagnostics).toEqual([]);
     const paths = flatten(result.nodes).map((node) => node.facts.pathFromRoot);
-    expect(paths).toEqual(
-      expect.arrayContaining(['project-a', 'project-a/.git', 'project-a/src', 'docs']),
-    );
+    expect(paths).toEqual(expect.arrayContaining(['project-a', 'docs']));
     expect(paths).not.toContain('node_modules');
     expect(paths).not.toContain('node_modules/some-pkg');
 
     const projectANode = findByPath(result.nodes, 'project-a');
     expect(projectANode?.verdict.project).toEqual({ value: true, byRule: 'is-project' });
+  });
+
+  it('a stopDescend rule stops the walk without reading the stopped directory’s own contents', async () => {
+    /**
+     * Round-05 review (codex-09): the previous version of this test claimed to cover
+     * `stopDescend` but never set the field, so the walk it exercised behaved identically with or
+     * without it. A rule here sets only `stopDescend` (no `project`), isolating the mechanism
+     * `walker.ts` implements from the separate project-descend-strategy override tested below.
+     */
+    const stopped = dir({ 'nested.txt': file(), 'nested-dir': dir({ trap: dir() }) });
+    const testRoot = dir({ 'stop-here': stopped, docs: dir() });
+    const fs = new FakeFileSystem(testRoot);
+    const rules: Rule[] = [
+      {
+        id: 'stop-here',
+        when: { kind: 'nameMatches', pattern: '^stop-here$' },
+        verdict: { stopDescend: true },
+      },
+    ];
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '' }],
+      rules,
+      fs,
+      new CancellationSource().signal,
+    );
+
+    const stopHereNode = findByPath(result.nodes, 'stop-here');
+    expect(stopHereNode).toBeDefined();
+    expect(stopHereNode?.children).toEqual([]);
+    expect(fs.pathsRead).not.toContain('/stop-here');
+    expect(fs.pathsRead.some((path) => path.startsWith('/stop-here/'))).toBe(false);
   });
 
   it('a skip rule matched purely by name never reads the skipped directory’s contents', async () => {
@@ -264,6 +312,90 @@ describe('discoverProjectTree — traversal of a test tree', () => {
     await discoverProjectTree([{ id: 'r', path: '' }], rules, fs, new CancellationSource().signal);
 
     expect(fs.pathsRead).toContain('/project-a');
+  });
+
+  it('marks entriesRead false for a node classified from name/depth alone, distinguishing it from a genuinely empty directory', async () => {
+    /**
+     * Round-05 review (claude-13): a node resolved by `nameMatches`/`depth` never reads its own
+     * directory, so `facts.entries` stays `[]` the same way a genuinely empty directory's would.
+     * `docs`'s own listing is never read here — "readme.md" would show up read if it were — yet the
+     * node must still say, explicitly, that nobody looked.
+     */
+    const docs = dir({ 'readme.md': file() });
+    const empty = dir({});
+    const testRoot = dir({ docs, empty });
+    const fs = new FakeFileSystem(testRoot);
+    const rules: Rule[] = [nameRule('mark-docs', '^docs$', false)];
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '' }],
+      rules,
+      fs,
+      new CancellationSource().signal,
+      { maxDepth: 1 }, // "docs" is reached and classified, but not itself expanded/read
+    );
+
+    const docsNode = findByPath(result.nodes, 'docs');
+    expect(docsNode?.entriesRead).toBe(false);
+    expect(docsNode?.facts.entries).toEqual([]);
+    expect(fs.pathsRead).not.toContain('/docs');
+  });
+});
+
+describe('discoverProjectTree — project descend strategy', () => {
+  /**
+   * Round-05 review (codex-03): `descend.ts` was implemented and unit-tested in isolation but
+   * never called from `tree.ts` — `childrenOfProject` had no effect on the tree
+   * `discoverProjectTree` actually returned. These tests exercise the wiring end to end, not just
+   * `childrenOfProject` itself (already covered by descend.test.ts).
+   */
+  it('a project’s real subdirectories are invisible under the default "stop" strategy', async () => {
+    const projectA = dir({ '.git': dir(), src: dir({ 'main.ts': file() }) });
+    const testRoot = dir({ 'project-a': projectA });
+    const fs = new FakeFileSystem(testRoot);
+    const rules: Rule[] = [projectByGitRule()];
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '' }], // no `descend` — defaults to 'stop'
+      rules,
+      fs,
+      new CancellationSource().signal,
+    );
+
+    const projectANode = findByPath(result.nodes, 'project-a');
+    expect(projectANode?.verdict.project.value).toBe(true);
+    expect(projectANode?.children).toEqual([]);
+    const paths = flatten(result.nodes).map((node) => node.facts.pathFromRoot);
+    expect(paths).not.toContain('project-a/src');
+  });
+
+  it('the "submodules" strategy pulls children from .gitmodules, and a submodule with its own .git becomes a project', async () => {
+    // "lib" is a declared submodule that is itself a repository — round-05 review (claude-07):
+    // without a real directory read for it, hasChild(['.git']) can never resolve and "lib" would
+    // never be classified `project: true`, no matter what descend strategy is configured.
+    const lib = dir({ '.git': dir() });
+    const projectA = dir({
+      '.git': dir(),
+      '.gitmodules': file('[submodule "lib"]\n\tpath = lib\n'),
+      lib,
+    });
+    const testRoot = dir({ 'project-a': projectA });
+    const fs = new FakeFileSystem(testRoot);
+    const rules: Rule[] = [projectByGitRule()];
+
+    const result = await discoverProjectTree(
+      [{ id: 'r', path: '', descend: 'submodules' }],
+      rules,
+      fs,
+      new CancellationSource().signal,
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    const libNode = findByPath(result.nodes, 'project-a/lib');
+    expect(libNode).toBeDefined();
+    expect(libNode?.verdict.project).toEqual({ value: true, byRule: 'is-project' });
+    // "lib" is itself a project, so it in turn gets its (absent) .gitmodules read, not a real walk.
+    expect(libNode?.children).toEqual([]);
   });
 });
 
@@ -475,5 +607,39 @@ describe('discoverProjectTree — cancellation', () => {
     ).rejects.toThrow('cancelled');
 
     expect(fs.readDirectoryCalls).toBe(2);
+  });
+
+  it('never starts a read that was only queued for a pool slot when cancellation lands', async () => {
+    /**
+     * Round-05 review (codex-04): `expandChildren` queues every sibling's read at once via
+     * `Promise.all`; the concurrency pool then admits only `concurrency` of them immediately and
+     * defers the rest. The old code checked `throwIfCancelled()` only once, before a read was
+     * queued — a read already waiting for a pool slot went ahead and ran once admitted, even after
+     * cancellation. Cancelling here while exactly `concurrency` reads are already in flight (the
+     * other 3 of 5 siblings still queued) must keep the read count at that number forever, not
+     * merely lower than "all 5".
+     */
+    const source = new CancellationSource();
+    const CHILD_COUNT = 5;
+    const CONCURRENCY = 2;
+    const children: Record<string, FakeNode> = {};
+    for (let index = 0; index < CHILD_COUNT; index += 1) {
+      children[`p${String(index)}`] = dir();
+    }
+    const testRoot = dir(children);
+    const fs = new FakeFileSystem(testRoot, {
+      beforeRead: (_path, readsSoFar) => {
+        // readsSoFar counts the root's own read (1) plus every child read admitted so far —
+        // cancel once both pool slots are occupied (root + the 2 concurrently-admitted children).
+        if (readsSoFar === 2) source.cancel();
+      },
+    });
+
+    const options = { concurrency: CONCURRENCY, maxDepth: 2 };
+    await expect(
+      discoverProjectTree([{ id: 'r', path: '' }], [], fs, source.signal, options),
+    ).rejects.toThrow('cancelled');
+
+    expect(fs.readDirectoryCalls).toBe(3); // root + the 2 already-admitted children, never more
   });
 });

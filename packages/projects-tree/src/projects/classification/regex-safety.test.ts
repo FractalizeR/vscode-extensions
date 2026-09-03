@@ -51,4 +51,51 @@ describe('checkRegexComplexity', () => {
   it('rejects a bounded repetition nested inside a quantified group', () => {
     expect(checkRegexComplexity('(a{2,4})+').safe).toBe(false);
   });
+
+  describe('overlapping alternation under a quantifier', () => {
+    it('rejects (a|aa)+ — measured at 61s on a 31-character input before this fix', () => {
+      expect(checkRegexComplexity('(a|aa)+').safe).toBe(false);
+    });
+
+    it('rejects (a|a?)+ — the second branch shares its mandatory first atom with the first', () => {
+      expect(checkRegexComplexity('(a|a?)+').safe).toBe(false);
+    });
+
+    it(String.raw`rejects (\d|\d\d)* — both branches start with the same escape atom`, () => {
+      expect(checkRegexComplexity(String.raw`(\d|\d\d)*`).safe).toBe(false);
+    });
+
+    it('rejects the non-capturing form (?:a|a)*', () => {
+      expect(checkRegexComplexity('(?:a|a)*').safe).toBe(false);
+    });
+
+    it('rejects an alternation branch that can match empty, e.g. (a|)+', () => {
+      expect(checkRegexComplexity('(a|)+').safe).toBe(false);
+    });
+
+    it('accepts (foo|bar)+ — branches start with distinct atoms', () => {
+      expect(checkRegexComplexity('(foo|bar)+').safe).toBe(true);
+    });
+
+    it('accepts (a|b)* — branches start with distinct atoms', () => {
+      expect(checkRegexComplexity('(a|b)*').safe).toBe(true);
+    });
+
+    it('does not flag alternation with no quantifier on the group at all', () => {
+      expect(checkRegexComplexity('(a|aa)').safe).toBe(true);
+    });
+
+    it('does not flag alternation whose group is not itself quantified, even nested in one that is', () => {
+      // The overlap only matters for the group the quantifier is actually attached to.
+      expect(checkRegexComplexity('((a|aa)b)+').safe).toBe(true);
+    });
+
+    it('is not fooled by a case actually measured to hang: (a|a)* over a long non-matching input', () => {
+      const start = performance.now();
+      const result = checkRegexComplexity('^(?:a|a)*$');
+      const elapsedMs = performance.now() - start;
+      expect(result.safe).toBe(false);
+      expect(elapsedMs).toBeLessThan(1000);
+    });
+  });
 });

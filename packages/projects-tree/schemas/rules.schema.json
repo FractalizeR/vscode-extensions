@@ -14,6 +14,11 @@
     "rules": {
       "type": "array",
       "items": { "$ref": "#/definitions/rule" }
+    },
+    "actions": {
+      "description": "Action definitions a rule's then.primaryAction may reference by id. Optional — a rules file with no custom actions omits this entirely.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/actionDefinition" }
     }
   },
   "definitions": {
@@ -117,6 +122,78 @@
         "icon": { "type": "string" },
         "description": { "type": "string" },
         "sortWeight": { "type": "number" }
+      }
+    },
+    "actionDefinition": {
+      "description": "A named, user-configured action (mirrors src/projects/actions/action.ts's ActionDefinition — the structural source of truth for this shape until 04 reconciles the two).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "spec"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "appliesTo": { "$ref": "#/definitions/condition" },
+        "spec": { "$ref": "#/definitions/actionSpec" }
+      }
+    },
+    "actionSpec": {
+      "oneOf": [
+        { "$ref": "#/definitions/actionSpecOpenFolder" },
+        { "$ref": "#/definitions/actionSpecTerminal" },
+        { "$ref": "#/definitions/actionSpecProcess" },
+        { "$ref": "#/definitions/actionSpecUri" },
+        { "$ref": "#/definitions/actionSpecCommand" }
+      ]
+    },
+    "actionSpecOpenFolder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "window"],
+      "properties": {
+        "kind": { "const": "openFolder" },
+        "window": { "enum": ["current", "new", "auto"] }
+      }
+    },
+    "actionSpecTerminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "command", "shell"],
+      "properties": {
+        "kind": { "const": "terminal" },
+        "command": { "type": "string" },
+        "shell": { "enum": ["zsh", "bash", "powershell", "cmd"] },
+        "execute": { "type": "boolean" },
+        "cwd": { "type": "string" },
+        "terminalName": { "type": "string" }
+      }
+    },
+    "actionSpecProcess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "command", "args"],
+      "properties": {
+        "kind": { "const": "process" },
+        "command": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "actionSpecUri": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "template"],
+      "properties": {
+        "kind": { "const": "uri" },
+        "template": { "type": "string" }
+      }
+    },
+    "actionSpecCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "commandId"],
+      "properties": {
+        "kind": { "const": "command" },
+        "commandId": { "type": "string" },
+        "args": { "type": "array" }
       }
     },
     "partialVerdict": {

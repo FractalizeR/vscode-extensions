@@ -66,6 +66,18 @@ export function validateRules(
 function validateCondition(condition: Condition, path: string): Diagnostic[] {
   switch (condition.kind) {
     case 'nameMatches': {
+      // Compile first: an uncompilable pattern/flags pair (e.g. `pattern: "("`, `flags: "q"`) must
+      // surface here as a diagnostic, not reach `compileCondition` later and throw a `SyntaxError`
+      // that walks/classification never expects (see `compileCondition`'s doc comment — it
+      // deliberately lets `new RegExp` throw, on the assumption this validation already ran).
+      // Complexity screening only makes sense once the pattern is known to compile at all.
+      try {
+        // Compiled only to observe whether it throws — the result itself is discarded.
+        new RegExp(condition.pattern, condition.flags);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return [{ path: `${path}/pattern`, message: `invalid regular expression: ${message}` }];
+      }
       const result = checkRegexComplexity(condition.pattern);
       return result.safe ? [] : [{ path: `${path}/pattern`, message: result.reason }];
     }
@@ -94,7 +106,15 @@ function validateCondition(condition: Condition, path: string): Diagnostic[] {
  */
 function validateHighlight(highlight: HighlightSpec, path: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
-  if (highlight.badge !== undefined && highlight.badge.length > 2) {
+  // Counted in Unicode code points, not UTF-16 code units (`.length`): VS Code's own check
+  // (api-facts.md, fact 7 — `nextCharLength` applied twice) is code-point-aware, so a single
+  // surrogate-pair emoji is one "character" to it, not two. Spreading a string iterates by code
+  // point, matching that exactly — `.length` would reject `'🔥🔥'` (four UTF-16 units) even though
+  // VS Code accepts it. `no-misused-spread` warns this can split a multi-code-point grapheme
+  // cluster (a ZWJ emoji sequence, say) into pieces — irrelevant here, since code points (not
+  // grapheme clusters) are exactly what fact 7's `nextCharLength` counts.
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread
+  if (highlight.badge !== undefined && [...highlight.badge].length > 2) {
     diagnostics.push({
       path: `${path}/badge`,
       message: 'must be at most 2 characters — VS Code drops the whole decoration otherwise',

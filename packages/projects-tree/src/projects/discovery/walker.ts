@@ -22,7 +22,7 @@ import {
   type Verdict,
   type VerdictFieldName,
 } from '../classification/index.js';
-import type { CancellationSignal } from './cancellation.js';
+import { CancellationError, type CancellationSignal } from './cancellation.js';
 import { FileSystemError, type FileSystemReader } from './file-system.js';
 
 export interface ClassifiedNode {
@@ -34,6 +34,15 @@ export interface ClassifiedNode {
   into; the two are not distinguished here (`docs/plans/projects-tree/02-core.md`, "обход ленивый").
   */
   readonly children: readonly ClassifiedNode[];
+  /**
+  Whether `facts.entries` reflects a real `readDirectory` call. `NodeFacts.entries` (owned by
+  `classification/`) has no room to say this about itself, so `ClassifiedNode` — discovery's own
+  wrapper — carries it alongside: `requiresEntries` below can classify a node from name/depth alone
+  and never read its directory, leaving `facts.entries` at `[]` the same way a genuinely empty
+  directory would (round-05 review, claude-13) — a consumer that cannot tell the two apart risks
+  reading "no children" out of a node nobody has actually looked inside.
+  */
+  readonly entriesRead: boolean;
 }
 
 export type WalkDiagnosticKind =
@@ -121,7 +130,7 @@ export async function walkRoot(params: WalkRootParams): Promise<WalkRootResult> 
       : [];
 
   return {
-    node: { facts: rootFacts, verdict: rootVerdict, children: rootChildren },
+    node: { facts: rootFacts, verdict: rootVerdict, children: rootChildren, entriesRead: true },
     diagnostics,
   };
 
@@ -130,8 +139,16 @@ export async function walkRoot(params: WalkRootParams): Promise<WalkRootResult> 
       signal.throwIfCancelled();
       let identity: string;
       try {
-        identity = await runLimited(() => fs.identity(path));
+        // The cancellation check happens again inside the callback passed to runLimited, not only
+        // above: a call already queued for a pool slot when cancel() fires must not proceed once
+        // admitted — throwIfCancelled() before runLimited only guards work that has not been
+        // queued yet (a `Promise.all` over siblings queues every one of them up front).
+        identity = await runLimited(() => {
+          signal.throwIfCancelled();
+          return fs.identity(path);
+        });
       } catch (error) {
+        if (error instanceof CancellationError) throw error;
         return { diagnostic: toDiagnostic(rootId, path, error, 'brokenSymlink') };
       }
       if (visitedIdentities.has(identity)) {
@@ -148,8 +165,12 @@ export async function walkRoot(params: WalkRootParams): Promise<WalkRootResult> 
     }
     signal.throwIfCancelled();
     try {
-      return await runLimited(() => fs.readDirectory(path));
+      return await runLimited(() => {
+        signal.throwIfCancelled();
+        return fs.readDirectory(path);
+      });
     } catch (error) {
+      if (error instanceof CancellationError) throw error;
       return { diagnostic: toDiagnostic(rootId, path, error) };
     }
   }
@@ -180,7 +201,12 @@ export async function walkRoot(params: WalkRootParams): Promise<WalkRootResult> 
 
     const canDescend = depth < maxDepth && !verdict.stopDescend.value;
     if (!canDescend) {
-      return { facts: { ...toExpand, entries: entries ?? [] }, verdict, children: [] };
+      return {
+        facts: { ...toExpand, entries: entries ?? [] },
+        verdict,
+        children: [],
+        entriesRead: entries !== undefined,
+      };
     }
 
     if (entries === undefined) {
@@ -190,13 +216,13 @@ export async function walkRoot(params: WalkRootParams): Promise<WalkRootResult> 
         // a directory removed between the parent's listing and this read — "папку удалили между
         // чтением и открытием" — must not drop this already-known node, only its children.
         diagnostics.push(read.diagnostic);
-        return { facts: { ...toExpand, entries: [] }, verdict, children: [] };
+        return { facts: { ...toExpand, entries: [] }, verdict, children: [], entriesRead: false };
       }
       entries = read;
     }
 
     const children = await expandChildren(toExpand, entries, depth + 1);
-    return { facts: { ...toExpand, entries }, verdict, children };
+    return { facts: { ...toExpand, entries }, verdict, children, entriesRead: true };
   }
 
   async function expandChildren(

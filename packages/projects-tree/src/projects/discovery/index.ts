@@ -11,6 +11,7 @@ export type { FileSystemErrorCode, FileSystemReader } from './file-system.js';
 export { discoverProjectTree } from './tree.js';
 export type {
   ClassifiedNode,
+  DiscoverDiagnostic,
   DiscoverOptions,
   DiscoverResult,
   DiscoveryRoot,

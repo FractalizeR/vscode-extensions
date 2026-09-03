@@ -118,3 +118,31 @@ describe('createNodeFileSystemReader — identity', () => {
     });
   });
 });
+
+describe('createNodeFileSystemReader — realPath', () => {
+  it('returns a path unchanged when it contains no symlink', async () => {
+    const reader = createNodeFileSystemReader();
+
+    const resolved = await reader.realPath(`${FIXTURE_DIR}/child-dir`);
+
+    expect(resolved.endsWith('/child-dir')).toBe(true);
+  });
+
+  it('resolves through a directory symlink to the real target path', async () => {
+    const reader = createNodeFileSystemReader();
+
+    const viaSymlink = await reader.realPath(`${FIXTURE_DIR}/dir-symlink`);
+    const direct = await reader.realPath(`${FIXTURE_DIR}/child-dir`);
+
+    expect(viaSymlink).toBe(direct);
+  });
+
+  it('rejects with a notFound FileSystemError for a path that does not exist', async () => {
+    const reader = createNodeFileSystemReader();
+
+    await expect(reader.realPath(`${FIXTURE_DIR}/does-not-exist`)).rejects.toMatchObject({
+      constructor: FileSystemError,
+      code: 'notFound',
+    });
+  });
+});

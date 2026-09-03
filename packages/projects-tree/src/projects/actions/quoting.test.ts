@@ -28,7 +28,10 @@ function unquote(quoted: string, shell: ShellKind): string {
     case 'cmd': {
       expect(quoted.startsWith('"')).toBe(true);
       expect(quoted.endsWith('"')).toBe(true);
-      return quoted.slice(1, -1).replaceAll('%%', '%');
+      // No un-escaping needed: `%` is rejected outright (quoting.ts), so a successfully quoted cmd
+      // value never contains one, and `"` is rejected too — nothing quoteForCmd emits needs
+      // reversing beyond stripping the wrapping quotes.
+      return quoted.slice(1, -1);
     }
   }
 }
@@ -37,11 +40,13 @@ const SHELLS: readonly ShellKind[] = ['zsh', 'bash', 'powershell', 'cmd'];
 
 /**
  * `SPECIAL_CHAR_CASES` filtered to those `shell` can actually quote — excludes cmd's rejected `"`
- * case, which the identity-function check below does not apply to (there is no quoted form to
- * compare against a `RenderError` throw).
+ * and `%` cases, which the identity-function check below does not apply to (there is no quoted form
+ * to compare against a `RenderError` throw).
  */
 function quotableCases(shell: ShellKind): typeof SPECIAL_CHAR_CASES {
-  return SPECIAL_CHAR_CASES.filter(({ value }) => !(shell === 'cmd' && value.includes('"')));
+  return SPECIAL_CHAR_CASES.filter(
+    ({ value }) => !(shell === 'cmd' && (value.includes('"') || value.includes('%'))),
+  );
 }
 
 /**
@@ -50,30 +55,39 @@ function quotableCases(shell: ShellKind): typeof SPECIAL_CHAR_CASES {
  * that would start a second command, a substitution, or variable expansion for that specific shell.
  */
 const SPECIAL_CHAR_CASES: readonly { label: string; value: string }[] = [
-  { label: 'semicolon (command separator)', value: 'evil; rm -rf /' },
-  { label: 'double ampersand (conditional chain)', value: 'evil && rm -rf /' },
-  { label: 'pipe', value: 'evil | rm -rf /' },
-  { label: 'backtick (command substitution)', value: 'evil `rm -rf /`' },
-  { label: 'dollar-paren (command substitution)', value: 'evil $(rm -rf /)' },
-  { label: 'percent variable (cmd env expansion)', value: 'evil %PATH% end' },
-  { label: 'single quote', value: "evil ' end" },
-  { label: 'double quote', value: 'evil " end' },
-  { label: 'space', value: 'a directory with spaces' },
-  { label: 'unicode', value: 'проект 🚀 目录' },
+  { label: 'semicolon (command separator)', value: 'evil; rm -rf /; evil; rm -rf /' },
+  { label: 'double ampersand (conditional chain)', value: 'evil && rm -rf / && evil && rm -rf /' },
+  { label: 'pipe', value: 'evil | rm -rf / | evil | rm -rf /' },
+  { label: 'backtick (command substitution)', value: 'evil `rm -rf /` evil `rm -rf /`' },
+  { label: 'dollar-paren (command substitution)', value: 'evil $(rm -rf /) evil $(rm -rf /)' },
+  { label: 'percent variable (cmd env expansion)', value: 'evil %PATH% end %PATH% end' },
+  { label: 'single quote', value: "evil ' end ' evil ' end" },
+  { label: 'double quote', value: 'evil " end " evil " end' },
+  { label: 'space', value: 'a directory with   spaces  in it' },
+  { label: 'unicode', value: 'проект проект 🚀 🚀 目录 目录' },
 ];
+
+/**
+ * cmd.exe cannot safely quote a value containing `"` (no in-quote escape at all, quoting.ts) or `%`
+ * (percent-expansion happens even inside quotes in interactive parsing — `%%` doubling is a
+ * batch-file-only rule, review-05 findings codex-01 / claude-12). Both are rejected outright.
+ */
+function isRejectedByCmd(value: string): boolean {
+  return value.includes('"') || value.includes('%');
+}
 
 describe('quoteForShell — special character x shell matrix', () => {
   for (const shell of SHELLS) {
     describe(shell, () => {
       for (const { label, value } of SPECIAL_CHAR_CASES) {
-        const isCmdDoubleQuote = shell === 'cmd' && label === 'double quote';
+        const isCmdRejection = shell === 'cmd' && isRejectedByCmd(value);
 
         it(
-          isCmdDoubleQuote
-            ? `rejects ${label} — cmd.exe has no safe in-quote escape for it (see quoting.ts)`
+          isCmdRejection
+            ? `rejects ${label} — cmd.exe has no safe in-quote handling for it (see quoting.ts)`
             : `quotes ${label} as one literal unit, recoverable by round-trip`,
           () => {
-            if (isCmdDoubleQuote) {
+            if (isCmdRejection) {
               expect(() => quoteForShell(value, shell)).toThrow(RenderError);
               try {
                 quoteForShell(value, shell);
@@ -110,6 +124,16 @@ describe('quoteForShell — POSIX (zsh/bash) single-quote escaping', () => {
   it('closes, escapes, and reopens the quote for an internal single quote', () => {
     expect(quoteForShell("it's", 'zsh')).toBe(String.raw`'it'\''s'`);
   });
+
+  it(
+    'escapes every single quote in a value, not just the first — regression for review-05 ' +
+      'finding claude-02: a test that only ever puts one quote in the fixture stays green even ' +
+      'if the implementation escapes only the first (replace instead of replaceAll)',
+    () => {
+      expect(quoteForShell("a'b'c'd", 'zsh')).toBe(String.raw`'a'\''b'\''c'\''d'`);
+      expect(quoteForShell("'''", 'bash')).toBe(String.raw`''\'''\'''\'''`);
+    },
+  );
 });
 
 describe('quoteForShell — PowerShell single-quote escaping', () => {
@@ -119,13 +143,39 @@ describe('quoteForShell — PowerShell single-quote escaping', () => {
     // single quotes — the quoted string carries these characters completely literally.
     expect(quoteForShell('$(whoami) & `echo hi`', 'powershell')).toBe("'$(whoami) & `echo hi`'");
   });
+
+  it(
+    'doubles every single quote in a value, not just the first — same replaceAll-vs-replace ' +
+      'regression as the POSIX case above, for PowerShell doubling instead of backslash-escaping',
+    () => {
+      expect(quoteForShell("a'b'c'd", 'powershell')).toBe("'a''b''c''d'");
+      expect(quoteForShell("'''", 'powershell')).toBe("''''''''");
+    },
+  );
 });
 
-describe('quoteForShell — cmd percent-doubling', () => {
-  it('doubles every percent sign, including adjacent ones', () => {
-    expect(quoteForShell('%USERPROFILE%', 'cmd')).toBe('"%%USERPROFILE%%"');
-    expect(quoteForShell('100%', 'cmd')).toBe('"100%%"');
+describe('quoteForShell — cmd: `"` and `%` are both rejected outright', () => {
+  it('quotes a value with none of the rejected characters as a plain double-quoted literal', () => {
+    expect(quoteForShell('a directory with spaces', 'cmd')).toBe('"a directory with spaces"');
   });
+
+  it(
+    'rejects every `%` in the value, not just the first, rather than doubling it — doubling ' +
+      '(`%%` -> literal `%`) is a batch-file-only rule that does not fold back for the ' +
+      'interactive cmd.exe Terminal.sendText types into (review-05 findings codex-01 / claude-12)',
+    () => {
+      for (const value of ['%USERPROFILE%', '100%', '%a%b%c%']) {
+        expect(() => quoteForShell(value, 'cmd')).toThrow(RenderError);
+        try {
+          quoteForShell(value, 'cmd');
+          expect.unreachable();
+        } catch (error) {
+          expect(error).toBeInstanceOf(RenderError);
+          expect((error as RenderError).reason).toBe('unsafeValue');
+        }
+      }
+    },
+  );
 });
 
 describe('encodeForUri', () => {

@@ -11,5 +11,5 @@ export type {
 } from './action';
 export { RenderError } from './action';
 export type { ActionRenderNode } from './render';
-export { render } from './render';
+export { render, renderArgs, renderCommandArgs } from './render';
 export { encodeForUri, quoteForShell } from './quoting';

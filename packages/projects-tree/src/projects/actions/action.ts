@@ -22,10 +22,10 @@ export type RenderTarget =
   { kind: 'shell'; shell: ShellKind } | { kind: 'uri' } | { kind: 'literal' };
 
 /**
- * One configured action a user can run against a classified node. `kind: 'openFolder'` and
- * `kind: 'command'` carry no template — nothing here for `render` to touch. `kind: 'terminal'`,
- * `kind: 'process'` and `kind: 'uri'` carry the sinks the threat model calls out (00-overview.md,
- * "Модель угроз"): a shell, an argv array, and a URI.
+ * One configured action a user can run against a classified node. `kind: 'openFolder'` carries no
+ * template — nothing here for `render` to touch. `kind: 'terminal'`, `kind: 'process'`,
+ * `kind: 'uri'` and `kind: 'command'` carry the sinks the threat model calls out (00-overview.md,
+ * "Модель угроз"): a shell, an argv array, a URI, and a VS Code command's argument list.
  */
 export type ActionSpec =
   | { kind: 'openFolder'; window: 'current' | 'new' | 'auto' }
@@ -56,11 +56,14 @@ export type ActionSpec =
     }
   | {
       /**
-       * Launched directly (no shell), so no shell-metacharacter risk — `command`/`args` are not
-       * `render` templates and carry no quoting concern. Still not a safe universal replacement for
-       * `terminal`: `.bat`/`.cmd` targets are not executable this way on Windows without a shell
-       * (api-facts.md fact 25) — picking `process` for such a target is the action author's
-       * mistake, not something this model can catch generically.
+       * Launched directly (no shell), so no shell-metacharacter risk — `command` is not a `render`
+       * template. `args` elements are: each is rendered by `renderArgs` (render.ts), target
+       * `{ kind: 'literal' }` — no shell sits between argv and the process, so nothing needs
+       * quoting, but the control-character rejection every `render` call makes still applies per
+       * element. Still not a safe universal replacement for `terminal`: `.bat`/`.cmd` targets are
+       * not executable this way on Windows without a shell (api-facts.md fact 25) — picking
+       * `process` for such a target is the action author's mistake, not something this model can
+       * catch generically.
        */
       kind: 'process';
       command: string;
@@ -73,7 +76,19 @@ export type ActionSpec =
       */
       template: string;
     }
-  | { kind: 'command'; commandId: string; args?: readonly unknown[] };
+  | {
+      /**
+       * `commandId` identifies which VS Code command runs — fixed by the action's author, never a
+       * `render` template. String elements of `args` are `render` templates, rendered by
+       * `renderCommandArgs` (render.ts), target `{ kind: 'literal' }` — same reasoning as
+       * `process.args`: `executeCommand` takes the array directly, no shell involved. A non-string
+       * element (number, boolean, object, …) passes through untouched — `${...}` substitution is a
+       * string-template concept, so only a string argument can carry one.
+       */
+      kind: 'command';
+      commandId: string;
+      args?: readonly unknown[];
+    };
 
 /**
  * A named, user-configured action. `id` is what a `Verdict.primaryAction` field-value and rule
@@ -94,11 +109,11 @@ export interface ActionDefinition {
  * Why `render` (render.ts) refused to produce a string. Declared here, not in render.ts or
  * quoting.ts, so both can throw it without importing each other: `quoteForShell` (quoting.ts, cmd's
  * `"` rejection — see quoting.ts) and `render` itself (`unknownVariable`, `missingValue`,
- * `newlineInValue`) both raise it, and render.ts already depends on quoting.ts (render calls the
- * quoting functions) — the reverse edge would make the two files a circular import.
+ * `controlCharacterInValue`) both raise it, and render.ts already depends on quoting.ts (render
+ * calls the quoting functions) — the reverse edge would make the two files a circular import.
  */
 export type RenderErrorReason =
-  'unknownVariable' | 'missingValue' | 'newlineInValue' | 'unsafeValue';
+  'unknownVariable' | 'missingValue' | 'controlCharacterInValue' | 'unsafeValue';
 
 export class RenderError extends Error {
   constructor(
