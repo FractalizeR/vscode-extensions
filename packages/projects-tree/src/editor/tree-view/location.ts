@@ -3,33 +3,16 @@
  * no `vscode`: the setting value decides which view ids exist and which context keys are true, and
  * both decisions are worth testing without an editor.
  *
+ * The context keys the three modes map onto live in `../context-keys/names.ts`; this file owns
+ * the view ids alone.
+ *
  * The three modes are **two views with different ids**, not one view in two places: a view id is
  * declared once in the manifest and names one view (api-facts.md, fact 5). Everything that names a
  * view id in `package.json` — `viewsWelcome`, `menus`, `activationEvents` — is therefore duplicated
  * across both ids, and the provider is registered on both.
  */
-import type { TreeLocation } from '../configuration/index.js';
-
 export const ACTIVITY_BAR_VIEW_ID = 'projectsTree.view';
 export const EXPLORER_VIEW_ID = 'projectsTree.explorerView';
-
-/**
-The context keys `when` clauses in the manifest look at. Own booleans set through `setContext`, not
-`config.projectsTree.location == '…'`: `config.` in a `when` clause is documented for settings that
-evaluate to a boolean, and `location` is a string, so that combination is not backed by a quote
-(api-facts.md, fact 6).
-*/
-export interface LocationContextKeys {
-  readonly 'projectsTree.locationIsActivityBar': boolean;
-  readonly 'projectsTree.locationIsExplorer': boolean;
-}
-
-export function locationContextKeys(location: TreeLocation): LocationContextKeys {
-  return {
-    'projectsTree.locationIsActivityBar': location === 'activityBar',
-    'projectsTree.locationIsExplorer': location === 'explorer',
-  };
-}
 
 /**
 Both view ids, always. The provider is registered on both regardless of `location`, and `when`

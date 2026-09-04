@@ -9,12 +9,24 @@
  * path-only key would collide their nodes (`docs/plans/projects-tree/00-overview.md`).
  */
 import type { ClassifiedNode } from '../../projects/discovery/index.js';
-import type { RootGroupNode } from './root-group.js';
+import { isRootGroupNode, type RootGroupNode, type TreeElement } from './root-group.js';
 
 export type NodeKey = string;
 
 export function nodeKey(rootId: string, pathFromRoot: string): NodeKey {
   return `${rootId}:${pathFromRoot}`;
+}
+
+/**
+The key for any tree element, and deliberately the same string `item.ts` assigns to `TreeItem.id`:
+the platform matches a node's remembered expansion state by that id (fact 27), so a key derived
+differently anywhere else would address state the view can never match back. Root groups live in
+their own `root:` namespace — they are keyed by `rootId` alone and have no path to collide on.
+*/
+export function treeElementKey(element: TreeElement): NodeKey {
+  return isRootGroupNode(element)
+    ? `root:${element.rootId}`
+    : nodeKey(element.facts.rootId, element.facts.pathFromRoot);
 }
 
 type MutableNode = { -readonly [K in keyof ClassifiedNode]: ClassifiedNode[K] };
@@ -47,6 +59,20 @@ export class NodeRegistry {
 
   forget(key: NodeKey): void {
     this.#canonical.delete(key);
+  }
+
+  /**
+  Drops every canonical object whose key is not in `liveKeys`. Called by `ProjectsTreeProvider`
+  after each discovery pass, because `canonicalize` only ever adds and updates: without a sweep the
+  map keeps an entry for every node ever seen, including ones deleted from disk, and it becomes the
+  cache-without-invalidation the plan deferred to stage 07 rather than the identity table it is
+  meant to be. Forgetting a key is correct rather than merely tidy — a node that reappears later is
+  genuinely a new node, and giving it a fresh object is what `canonicalize` would do anyway.
+  */
+  retainOnly(liveKeys: ReadonlySet<NodeKey>): void {
+    for (const key of this.#canonical.keys()) {
+      if (!liveKeys.has(key)) this.#canonical.delete(key);
+    }
   }
 
   /**
@@ -83,5 +109,15 @@ export class RootGroupRegistry {
 
   invalidate(): void {
     this.#byRootId.clear();
+  }
+
+  /**
+  Same sweep as `NodeRegistry.retainOnly`, over this registry's own `root:` namespace — a root
+  removed from the setting must not keep its group object alive.
+  */
+  retainOnly(liveKeys: ReadonlySet<NodeKey>): void {
+    for (const [rootId, group] of this.#byRootId) {
+      if (!liveKeys.has(treeElementKey(group))) this.#byRootId.delete(rootId);
+    }
   }
 }

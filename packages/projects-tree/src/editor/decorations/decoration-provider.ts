@@ -65,6 +65,14 @@ excerpt). An over-limit badge is treated as absent rather than truncated: silent
 author's badge is a worse surprise than dropping it, and dropping it here still lets `color` through
 instead of losing the whole decoration the way an uncaught platform throw would.
 
+An empty or whitespace-only badge (`''`, `' '`) is likewise treated as absent, not passed through
+(review-06, codex-05): VS Code's own emptiness check (fact 7's `!d.badge`) is falsy for `''`, so a
+decoration that also sets `color`/`tooltip` would otherwise reach the platform whole while the badge
+slot renders nothing visible — this module's own guard, same as `validateHighlight`'s in
+`projects/classification/validation.ts`, since a `HighlightSpec` reaching here did not necessarily
+go through that validation (see this file's own doc comment on why `buildDecorationSpec` re-checks
+the badge length independently).
+
 `tooltip` is `HighlightSpec.description`: the core defines no separate tooltip field, and
 `description`'s own text is exactly what a hover over the color/badge should say.
 */
@@ -73,7 +81,9 @@ export function buildDecorationSpec(
 ): DecorationSpec | undefined {
   if (highlight === undefined) return undefined;
   const badge =
-    highlight.badge !== undefined && isBadgeWithinPlatformLimit(highlight.badge)
+    highlight.badge !== undefined &&
+    highlight.badge.trim().length > 0 &&
+    isBadgeWithinPlatformLimit(highlight.badge)
       ? highlight.badge
       : undefined;
   if (badge === undefined && highlight.color === undefined) return undefined;
@@ -102,25 +112,44 @@ URIs of every `ClassifiedNode` ancestor above it. A `RootGroupNode` contributes 
 — it has no `resourceUri` (docs/plans/projects-tree/00-overview.md, "Корень — контейнер, а не
 узел") — but its children are still walked, with the ancestor chain unchanged, so a project directly
 under a root group still gets the (empty) chain it would have without grouping.
+
+`seenKeys` gives every URI at most one entry (review-06, codex-09/claude-05): the core keys a node
+by `rootId` + path (`NodeKey`, `tree-view/registry.ts`), because two configured roots can overlap on
+disk, but `provideFileDecoration` is handed only a `vscode.Uri` (fact 8) — the platform gives this
+provider no way to say *which* node a URI's decoration is for, so two nodes that share an absolute
+path can never carry independent decorations at this boundary; that is a platform limitation, not a
+gap in this module. The decision here is first-write-wins in `roots`/discovery order: the first
+node to reach a given URI (its own configured root's position, since `collect` walks `elements` —
+`buildTopLevel`'s per-root groups, in `roots` order — depth-first) claims that URI's decoration, and
+every later node at the same path is walked (its own children may still have distinct paths) but
+contributes no decoration of its own. Rejected alternative: merge the two `HighlightSpec`s
+field-by-field — rejected because "which root's color wins when both set one" has no non-arbitrary
+answer either, and a silent merge would look like a real per-node decoration when it structurally
+cannot be one.
 */
 function collect(
   elements: readonly TreeElement[],
   ancestorUris: readonly vscode.Uri[],
   out: CollectedEntry[],
+  seenKeys: Set<string>,
 ): void {
   for (const element of elements) {
     if (isRootGroupNode(element)) {
-      collect(element.children, ancestorUris, out);
+      collect(element.children, ancestorUris, out, seenKeys);
       continue;
     }
     const uri = vscode.Uri.file(element.facts.absolutePath);
-    out.push({
-      key: uri.toString(),
-      uri,
-      spec: buildDecorationSpec(element.verdict.highlight.value),
-      ancestorUris,
-    });
-    collect(element.children, [...ancestorUris, uri], out);
+    const key = uri.toString();
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      out.push({
+        key,
+        uri,
+        spec: buildDecorationSpec(element.verdict.highlight.value),
+        ancestorUris,
+      });
+    }
+    collect(element.children, [...ancestorUris, uri], out, seenKeys);
   }
 }
 
@@ -147,7 +176,7 @@ export class HighlightDecorationProvider
 
   update(elements: readonly TreeElement[]): void {
     const entries: CollectedEntry[] = [];
-    collect(elements, [], entries);
+    collect(elements, [], entries, new Set<string>());
     const nextState = new Map(entries.map((entry) => [entry.key, entry]));
 
     const toSignal = new Map<string, vscode.Uri>();

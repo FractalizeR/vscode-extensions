@@ -52,6 +52,18 @@ a check as covered by `pnpm check` unless it runs there. This list is machine-ch
 actual `check` chain (`tools/check-chain.test.ts`) — it drifted once already, `schema:check` having
 been added to the chain without being written down here.
 
+`test:integration` runs against the pinned `engines.vscode` floor (`1.85.0`) by default — the
+version every `api-facts.md` decision is staked on — set in `.vscode-test.mjs`. Override locally
+with `VSCODE_TEST_VERSION=<version>` (e.g. `stable`) to check current stable without editing the
+config. CI runs the pinned floor only, not a matrix: the editor download is cached per version, and
+a second version costs a second download and boot for a class of regression this project has not
+needed yet.
+
+`tools/check-vsix-contents.ts` cannot join `pnpm check` — it inspects a built `.vsix`, which
+`pnpm check` does not produce. It runs in CI instead, in both the `check` job (right after the
+packaging step, so a stale allowlist fails a pull request) and `publish.yml` (before a release).
+Adding a shipped file means adding it to that allowlist in the same change.
+
 Integration tests (`@vscode/test-cli`) require a running editor and stay out of `pnpm check` for
 that reason; they run in their own CI job instead — `pnpm --filter projects-tree test:integration`
 locally, the `integration-test` job in CI, which needs `xvfb-run -a` on Linux

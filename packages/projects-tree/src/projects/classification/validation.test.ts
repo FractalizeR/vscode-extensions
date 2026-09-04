@@ -92,6 +92,40 @@ describe('validateRules', () => {
     expect(validateRules(rules, [])).toEqual([]);
   });
 
+  it('accepts a one-character badge', () => {
+    const rules = [rule({ verdict: { highlight: { badge: '!' } } })];
+    expect(validateRules(rules, [])).toEqual([]);
+  });
+
+  it(// codex-05 (review-06): '' passes VS Code's own emptiness check (`!d.badge` is true for ''),
+  // so a decoration that also sets `description`/`color` was accepted whole while the badge slot
+  // rendered nothing visible — invisible-but-present, not caught by the length check above.
+  'rejects an empty badge, even when another field also sets a decorating value', () => {
+    const rules = [rule({ verdict: { highlight: { badge: '', color: 'charts.red' } } })];
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/then/highlight/badge' }),
+    );
+  });
+
+  it('rejects a whitespace-only badge the same way as an empty one', () => {
+    // Decision: whitespace-only is folded into the same rule as '' rather than left to pass as
+    // "technically non-empty" — a badge no rule author can see is the same defect either way.
+    const rules = [rule({ verdict: { highlight: { badge: '  ', color: 'charts.red' } } })];
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/then/highlight/badge' }),
+    );
+  });
+
+  it('treats an empty badge as no decorating field when nothing else is set either', () => {
+    const rules = [rule({ verdict: { highlight: { badge: '' } } })];
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/then/highlight' }),
+    );
+  });
+
   it('accepts a single-emoji badge, a surrogate pair counted as one code point', () => {
     // Regression: `.length` counts UTF-16 code units, so '🔥' (`.length === 2`) used to be
     // rejected even though VS Code's own check (api-facts.md fact 7) accepts it as one character.

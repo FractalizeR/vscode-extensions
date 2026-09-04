@@ -9,6 +9,7 @@ import {
   RootGroupRegistry,
 } from '../../src/editor/tree-view/index.js';
 import type { ConfiguredRoot } from '../../src/editor/configuration/index.js';
+import type { ExpansionState } from '../../src/editor/tree-view/expansion.js';
 import { isRootGroupNode } from '../../src/editor/tree-view/root-group.js';
 import type { ClassifiedNode } from '../../src/projects/discovery/index.js';
 import { makeProjectDir, makeTempRoot, removeDir } from './temp-tree.js';
@@ -34,13 +35,16 @@ suite('getChildren over a real directory tree', () => {
       () => [root],
       () => 'auto',
       createNodeFileSystemReader(),
-      DEFAULT_RULES,
+      () => DEFAULT_RULES,
       new NodeRegistry(),
       new RootGroupRegistry(),
       // Nothing is remembered as expanded: these suites assert tree content and node identity, not
-      // the expansion store (which has its own unit tests). `false` means "no opinion" — item.ts
-      // then uses its own per-kind default (api-facts.md, fact 41).
-      () => false,
+      // the expansion store (which has its own unit tests). `stateOf` returning `undefined` means "no
+      // opinion" — item.ts then uses its own per-kind default (api-facts.md, fact 41).
+      {
+        stateOf: (): ExpansionState | undefined => undefined,
+        retainOnly: (): PromiseLike<void> | undefined => undefined,
+      },
     );
 
     await provider.refresh();

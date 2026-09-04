@@ -67,12 +67,48 @@ describe('readRoots', () => {
 
   it('treats a missing or non-array setting as no roots, not an error', () => {
     state.values.roots = undefined;
-    expect(readRoots()).toEqual({ roots: [], invalid: [] });
+    expect(readRoots()).toEqual({ roots: [], invalid: [], duplicates: [] });
   });
 
   it('uses the path itself as the root id', () => {
     state.values.roots = ['/one/two'];
     expect(readRoots().roots[0]?.id).toBe('/one/two');
+  });
+
+  it(// claude-01 (review-06): the path doubles as NodeKey's rootId — two entries with the same id
+  // used to become two ConfiguredRoots the tree view materialized as the same object twice
+  // (buildTopLevel), breaking object-identity addressing (fact 4) and TreeItem.id uniqueness
+  // (fact 27). Only the first occurrence must survive.
+  'deduplicates an exact-string-repeated path, keeping only the first occurrence', () => {
+    state.values.roots = ['/abs/one', '/abs/one', '/abs/two'];
+
+    const { roots, duplicates } = readRoots();
+
+    expect(roots).toEqual([
+      { id: '/abs/one', path: '/abs/one' },
+      { id: '/abs/two', path: '/abs/two' },
+    ]);
+    expect(duplicates).toEqual(['/abs/one']);
+  });
+
+  it('deduplicates a string entry against an earlier object entry with the same path', () => {
+    state.values.roots = [{ path: '/abs/one', label: 'First' }, '/abs/one'];
+
+    const { roots, duplicates } = readRoots();
+
+    expect(roots).toEqual([{ id: '/abs/one', path: '/abs/one', label: 'First' }]);
+    expect(duplicates).toEqual(['/abs/one']);
+  });
+
+  it('does not treat differently-spelled paths to the same directory as duplicates', () => {
+    // Named limitation (see RootsReadResult's doc comment): only exact string equality on id is
+    // checked, so a trailing separator still produces two accepted, undetected duplicates.
+    state.values.roots = ['/abs/one', '/abs/one/'];
+
+    const { roots, duplicates } = readRoots();
+
+    expect(roots).toHaveLength(2);
+    expect(duplicates).toEqual([]);
   });
 });
 

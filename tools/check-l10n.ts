@@ -32,6 +32,7 @@ import ts from 'typescript';
 const HERE = nodePath.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = nodePath.join(HERE, '..');
 const SRC_DIR = nodePath.join(REPO_ROOT, 'packages/projects-tree/src');
+const PACKAGE_MANIFEST = nodePath.join(REPO_ROOT, 'packages/projects-tree/package.json');
 const PACKAGE_NLS_EN = nodePath.join(REPO_ROOT, 'packages/projects-tree/package.nls.json');
 const PACKAGE_NLS_RU = nodePath.join(REPO_ROOT, 'packages/projects-tree/package.nls.ru.json');
 const BUNDLE_EN = nodePath.join(REPO_ROOT, 'packages/projects-tree/l10n/bundle.l10n.json');
@@ -54,26 +55,92 @@ export interface ExtractionResult {
   readonly errors: ExtractionError[];
 }
 
-function isLikeL10nNamespace(expression: ts.Expression): boolean {
-  // Matches `l10n` (namespace import) and `<anything>.l10n` (namespace member access, e.g.
-  // `vscode.l10n`) — deliberately not anchored to the identifier `vscode` so a future rename of the
-  // import alias does not silently stop extraction.
-  if (ts.isIdentifier(expression)) {
-    return expression.text === 'l10n';
-  }
-  if (ts.isPropertyAccessExpression(expression)) {
-    return expression.name.text === 'l10n';
-  }
-  return false;
+/**
+ * Имена, под которыми в конкретном файле доступна `l10n`, собранные из его импортов, а не угаданные
+ * по тексту. Прежняя версия сопоставляла идентификатор с литералом `'l10n'` и в комментарии
+ * обещала, что переименование алиаса её не сломает; обещание было ложным —
+ * `import { l10n as i18n } from 'vscode'; i18n.t('x')` не распознавался ни как вызов, ни как
+ * ошибка извлечения, то есть строка исчезала молча (round 06, codex-07 / claude-12).
+ */
+/**
+Стабильный порядок для диагностик. Отдельная функция, а не `.sort()` на месте: `toSorted()` требует
+lib ES2023+, а репозиторий целится в ES2022, поэтому подавление правила нужно ровно в одном месте
+(тот же приём в `tools/check-vsix-contents.ts`).
+*/
+function sortedCopy(values: readonly string[]): string[] {
+  // eslint-disable-next-line unicorn/no-array-sort -- см. докстринг выше.
+  return [...values].sort((a, b) => a.localeCompare(b));
 }
 
-function isL10nTCall(node: ts.CallExpression): boolean {
+interface L10nBindings {
+  /**
+  `import { l10n } from 'vscode'` или `import { l10n as i18n }` → `l10n` / `i18n`.
+  */
+  readonly direct: ReadonlySet<string>;
+  /**
+  `import * as vscode from 'vscode'` → `vscode`, обращение вида `vscode.l10n.t`.
+  */
+  readonly namespaces: ReadonlySet<string>;
+}
+
+function collectL10nBindings(sourceFile: ts.SourceFile): L10nBindings {
+  const direct = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const specifier = statement.moduleSpecifier;
+    if (!ts.isStringLiteralLike(specifier) || specifier.text !== 'vscode') continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      namespaces.add(bindings.name.text);
+      continue;
+    }
+    for (const element of bindings.elements) {
+      // `propertyName` присутствует только у алиаса: `{ l10n as i18n }` даёт propertyName=l10n,
+      // name=i18n. Без алиаса имя и есть импортируемый символ.
+      const imported = element.propertyName?.text ?? element.name.text;
+      if (imported === 'l10n') direct.add(element.name.text);
+    }
+  }
+  return { direct, namespaces };
+}
+
+function isL10nNamespace(expression: ts.Expression, bindings: L10nBindings): boolean {
+  if (ts.isIdentifier(expression)) return bindings.direct.has(expression.text);
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === 'l10n' &&
+    ts.isIdentifier(expression.expression) &&
+    bindings.namespaces.has(expression.expression.text)
+  );
+}
+
+function isL10nTCall(node: ts.CallExpression, bindings: L10nBindings): boolean {
   const callee = node.expression;
   return (
     ts.isPropertyAccessExpression(callee) &&
     callee.name.text === 't' &&
-    isLikeL10nNamespace(callee.expression)
+    isL10nNamespace(callee.expression, bindings)
   );
+}
+
+/**
+Обращение к `l10n` где-либо, кроме позиции получателя в `<l10n>.t(...)`, — громкая ошибка, а не
+пропуск. Именно так выглядят формы, из которых ключ извлечь нельзя: `const t = l10n.t; t('x')`,
+передача `l10n` в функцию, `l10n['t']('x')`. Молчание здесь означало бы, что строка не попадёт ни в
+бандл, ни в отчёт.
+*/
+function isUnextractableL10nUse(node: ts.Node, bindings: L10nBindings): boolean {
+  if (!ts.isIdentifier(node) || !bindings.direct.has(node.text)) return false;
+  const parent = node.parent as ts.Node | undefined;
+  if (parent === undefined) return true;
+  // Собственное объявление импорта — не использование.
+  if (ts.isImportSpecifier(parent)) return false;
+  if (!ts.isPropertyAccessExpression(parent) || parent.expression !== node) return true;
+  if (parent.name.text !== 't') return true;
+  const call = parent.parent as ts.Node | undefined;
+  return !(call !== undefined && ts.isCallExpression(call) && call.expression === parent);
 }
 
 function stringLiteralArrayText(node: ts.Expression): string[] | undefined {
@@ -135,8 +202,20 @@ function extractFromSourceFile(sourceFile: ts.SourceFile, relativePath: string):
   const keys: ExtractedKey[] = [];
   const errors: ExtractionError[] = [];
 
+  const bindings = collectL10nBindings(sourceFile);
+
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && isL10nTCall(node)) {
+    if (isUnextractableL10nUse(node, bindings)) {
+      errors.push({
+        file: relativePath,
+        line: lineOf(sourceFile, node),
+        detail:
+          'l10n is referenced somewhere other than as the receiver of a direct `.t(...)` call ' +
+          '(for example aliased to a local, or passed as a value) — extraction cannot follow that, ' +
+          'and the bundle key would be lost silently',
+      });
+    }
+    if (ts.isCallExpression(node) && isL10nTCall(node, bindings)) {
       const [firstArg] = node.arguments;
       const line = lineOf(sourceFile, node);
       if (firstArg === undefined) {
@@ -282,6 +361,33 @@ function runCheck(): void {
     );
   }
 
+  // Channel 1b: every `%key%` the manifest references must exist in package.nls.json. VS Code does
+  // not treat an unresolved reference as an error — it renders the literal `%key%` to the user, in
+  // the settings UI or a view title — so a typo ships and looks like a rendering bug rather than a
+  // missing string (round 06, codex-06 / qwen-04). Checked against the manifest as a whole rather
+  // than field by field: `%key%` may appear in any contributed string, and enumerating the fields
+  // that may carry one is exactly the list that goes stale.
+  const manifestText = readFileSync(PACKAGE_MANIFEST, 'utf8');
+  const referenced = new Set(
+    Array.from(manifestText.matchAll(/"%([^"%]+)%"/g), (match) => match[1] ?? ''),
+  );
+  const dangling = sortedCopy([...referenced].filter((key) => !Object.hasOwn(manifestEn, key)));
+  if (dangling.length > 0) {
+    problems.push(
+      `${nodePath.relative(REPO_ROOT, PACKAGE_MANIFEST)} references %key% placeholder(s) absent ` +
+        `from ${nodePath.relative(REPO_ROOT, PACKAGE_NLS_EN)} (they render literally to the user):\n` +
+        dangling.map((key) => `  - %${key}%`).join('\n'),
+    );
+  }
+  const unreferenced = sortedCopy(Object.keys(manifestEn).filter((key) => !referenced.has(key)));
+  if (unreferenced.length > 0) {
+    problems.push(
+      `${nodePath.relative(REPO_ROOT, PACKAGE_NLS_EN)} defines key(s) the manifest never ` +
+        `references (dead string, and its translation is dead too):\n` +
+        unreferenced.map((key) => `  - ${key}`).join('\n'),
+    );
+  }
+
   // Channel 2: runtime strings (l10n.t() call sites -> l10n/bundle.l10n.ru.json), re-extracted from
   // source on every run — see the file-level comment for why this must not read a previously
   // generated file as ground truth.
@@ -366,7 +472,12 @@ function main(): void {
   }
 }
 
-// Only run when executed directly (node tools/check-l10n.ts ...), not when imported by the test file.
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+// Only run when executed directly (node tools/check-l10n.ts ...), not when imported by the test
+// file. Compared as resolved paths, not as a hand-built `file://` string: that string form differs
+// from what `import.meta.url` produces on Windows (drive letters, backslashes) and for any path
+// needing percent-encoding, so the guard would silently never fire and the checks would be dead
+// (round 06 review, qwen-05).
+const invokedPath = process.argv[1];
+if (invokedPath !== undefined && fileURLToPath(import.meta.url) === nodePath.resolve(invokedPath)) {
   main();
 }

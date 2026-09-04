@@ -7,8 +7,12 @@ import type { RootGroupNode, TreeElement } from '../tree-view/root-group.js';
 // `FileDecoration.validate` (api-facts.md, fact 7) is not reproduced here: this module's own guard
 // (`isBadgeWithinPlatformLimit`) is what is under test, not the platform's.
 vi.mock('vscode', () => {
+  // No public `id`: at the 1.85 floor `ThemeColor` declares only its constructor (api-facts.md,
+  // fact 43). Nothing here asserts on the colour's id — the tests check the plain `colorId` on the
+  // spec before a `ThemeColor` is ever built — so the mock has no reason to expose more than the
+  // platform does. See item.test.ts for the same reasoning at length.
   class ThemeColor {
-    constructor(public readonly id: string) {}
+    constructor(readonly _id: string) {}
   }
   class FileDecoration {
     propagate?: boolean;
@@ -123,6 +127,31 @@ describe('buildDecorationSpec', () => {
 
   it('an over-limit badge with no color produces no spec at all', () => {
     expect(buildDecorationSpec({ badge: 'ABC' })).toBeUndefined();
+  });
+
+  it(// codex-05 (review-06): '' is falsy, so VS Code's own `!d.badge` emptiness check does not
+  // catch it when `color` is also set — this module's own guard must, or the badge slot renders
+  // with nothing visible while the rest of the decoration is accepted whole.
+  'drops an empty badge but keeps colorId, rather than passing an invisible badge through', () => {
+    const spec = buildDecorationSpec({ badge: '', color: 'projectsTree.highlight' });
+    expect(spec).toEqual({
+      badge: undefined,
+      tooltip: undefined,
+      colorId: 'projectsTree.highlight',
+    });
+  });
+
+  it('an empty badge with no color produces no spec at all', () => {
+    expect(buildDecorationSpec({ badge: '' })).toBeUndefined();
+  });
+
+  it('drops a whitespace-only badge the same way as an empty one', () => {
+    const spec = buildDecorationSpec({ badge: ' '.repeat(3), color: 'projectsTree.highlight' });
+    expect(spec?.badge).toBeUndefined();
+  });
+
+  it('keeps a one-character badge', () => {
+    expect(buildDecorationSpec({ badge: '!' })?.badge).toBe('!');
   });
 });
 
@@ -241,5 +270,22 @@ describe('HighlightDecorationProvider', () => {
     expect(provider.provideFileDecoration(makeUri(child.facts.absolutePath) as never)?.badge).toBe(
       'X',
     );
+  });
+
+  it(// codex-09/claude-05 (review-06): two overlapping roots can classify the same absolute path
+  // differently, but `provideFileDecoration` receives only a `Uri` — no way to say which node's
+  // decoration is wanted. Decision: first root in walk order wins, deterministically, rather than
+  // the two decorations silently colliding into whichever `update()` happened to process last.
+  'first-root-wins when two overlapping roots classify the same absolute path differently', () => {
+    const provider = new HighlightDecorationProvider();
+    const first = makeNode('shared', { verdict: withHighlight({ badge: '1' }) }, '/roots/r1');
+    const second: ClassifiedNode = {
+      ...makeNode('shared', { verdict: withHighlight({ badge: '2' }) }, '/roots/r1'),
+      facts: { ...first.facts, rootId: 'r2' },
+    };
+    provider.update([first, second]);
+
+    const decoration = provider.provideFileDecoration(makeUri(first.facts.absolutePath) as never);
+    expect(decoration?.badge).toBe('1');
   });
 });

@@ -103,9 +103,23 @@ function validateCondition(condition: Condition, path: string): Diagnostic[] {
  * every field left `undefined` is rejected here: VS Code rejects an empty decoration the same way
  * (fact 7), and `{ sortWeight }` alone is the one legitimate all-but-one-field-empty case, since
  * `sortWeight` never reaches the decoration.
+ *
+ * A `badge` that is empty or whitespace-only (`''`, `' '`) is rejected too — review-06's codex-05.
+ * VS Code's own check does not catch this: `!d.badge` is true for `''`, so fact 7's guard treats it
+ * as "no badge" for the *emptiness* check, but nothing stops `badge: ''` reaching a decoration that
+ * also sets `description`/`color` — the platform accepts that as non-empty (the tooltip/color carry
+ * it) and renders a badge slot with nothing visible in it. Whitespace-only is folded into the same
+ * rule rather than left to slip through as "technically non-empty": a badge no rule author can see
+ * is the same defect whether it is zero characters or a run of spaces.
  */
 function validateHighlight(highlight: HighlightSpec, path: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
+  if (highlight.badge?.trim().length === 0) {
+    diagnostics.push({
+      path: `${path}/badge`,
+      message: 'must not be empty or whitespace-only — it would render with no visible content',
+    });
+  }
   // Counted in Unicode code points, not UTF-16 code units (`.length`): VS Code's own check
   // (api-facts.md, fact 7 — `nextCharLength` applied twice) is code-point-aware, so a single
   // surrogate-pair emoji is one "character" to it, not two. Spreading a string iterates by code
@@ -120,10 +134,11 @@ function validateHighlight(highlight: HighlightSpec, path: string): Diagnostic[]
       message: 'must be at most 2 characters — VS Code drops the whole decoration otherwise',
     });
   }
+  const hasVisibleBadge = highlight.badge !== undefined && highlight.badge.trim().length > 0;
   const hasDecoratingField =
     highlight.labelHighlight !== undefined ||
     highlight.color !== undefined ||
-    highlight.badge !== undefined ||
+    hasVisibleBadge ||
     highlight.icon !== undefined ||
     highlight.description !== undefined;
   // sortWeight-only is legitimate — it affects ordering, never reaches the decoration layer.

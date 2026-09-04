@@ -30,6 +30,7 @@
     }
   },
   "activationEvents": [
+    "onStartupFinished",
     "onView:projectsTree.view",
     "onView:projectsTree.explorerView"
   ],
@@ -199,7 +200,7 @@
     "build:prod": "node esbuild.mjs --prod",
     "copy:license": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
     "package": "pnpm run copy:license && pnpm run build:prod && vsce package --no-dependencies",
-    "test:integration": "node -e \"fs.rmSync('out',{recursive:true,force:true})\" && tsc -p test/tsconfig.json && vscode-test"
+    "test:integration": "node -e \"fs.rmSync('out',{recursive:true,force:true})\" && pnpm run build && tsc -p test/tsconfig.json && vscode-test"
   },
   "dependencies": {
     "ajv": "^8.17.1"

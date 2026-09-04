@@ -14,9 +14,15 @@ const ALLOWLIST: readonly string[] = [
   'readme.md',
   'LICENSE.txt',
   'l10n/bundle.l10n.json',
+  // Both localization channels ship: manifest strings via package.nls*.json, runtime strings via
+  // the l10n bundles (docs/plans/projects-tree/api-facts.md, facts 19, 30, 51). The base
+  // bundle.l10n.json is not needed at run time (fact 50) but is the reference `l10n:check` reads,
+  // and shipping it costs nothing.
+  'l10n/bundle.l10n.ru.json',
   'dist/extension.js',
   'schemas/rules.schema.json',
   'package.nls.json',
+  'package.nls.ru.json',
   'media/activity-icon.svg',
 ];
 

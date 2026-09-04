@@ -25,6 +25,14 @@
    скачанному файлу, подтвердились дословно; все 10 строк, взятые из пересказа веб-страницы,
    разошлись с источником, причём две содержали текст, которого в источнике нет.
 
+**Адресация в источниках, живущих на подвижной ветке.** Строки, ссылающиеся на файлы реализации
+VS Code, указывают путь и номер строки на `main` — а `main` двигается, поэтому через месяц номер
+адресует другой код, и правило 4 («команда, которую можно повторить») перестаёт выполняться, хотя
+цитата остаётся верной (находка claude-14, round 06). Поэтому: **номер строки — вспомогательный
+ориентир, воспроизводимость обеспечивает приведённая рядом команда `curl` + `grep` по содержимому,
+а не по номеру.** Снимок `main`, против которого сверялись строки 39-61: `8cc6591ff9f0ed058cc3964ef5b45c31c422a2bb`
+(2026-09-04). Проверка строки, чей номер уехал, начинается с `grep` по цитируемому тексту.
+
 **Две базы сверки, и их нельзя смешивать:**
 
 - **целевая планка — `1.85.0`** (нижняя граница `engines.vscode`). Решение плана годится только
@@ -85,10 +93,30 @@ walkthrough в 05-B) — все три исправлены вместе с эт
 > `vscode.window.registerTreeDataProviderForView` API. Also to trigger activating your extension by
 > registering `onView:${id}` event to `activationEvents`.»
 
-Формулировка нормативная («should be», «recommended»), а не описание проверки платформы: строка не
-утверждает, что коллизия id отвергается. Следствие для плана: два view расширения используют разные
-id по соглашению, а не потому что платформа запретит совпадение; `activationEvents` обязан
-перечислять `onView:<id>` для каждого — это часть той же цитаты, а не отдельное утверждение.
+Формулировка нормативная («should be», «recommended»), а не описание проверки платформы.
+
+**Ревизия round 06: вывод, стоявший здесь, был неверен.** Прежняя редакция заключала «два view
+расширения используют разные id по соглашению, а не потому что платформа запретит совпадение».
+Платформа как раз запрещает — `viewsExtensionPoint.ts:473-480`
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/api/browser/viewsExtensionPoint.ts | sed -n '470,482p'`):
+> ```ts
+> if (viewIds.has(item.id)) {
+>     collector.error(localize('duplicateView1', "Cannot register multiple views with same id `{0}`", item.id));
+>     continue;
+> }
+> if (this.viewsRegistry.getView(item.id) !== null) {
+>     collector.error(localize('duplicateView2', "A view with id `{0}` is already registered.", item.id));
+>     continue;
+> }
+```
+
+Проверка двойная: `Set` виденных id внутри одного вклада и глобальный реестр против уже
+зарегистрированного view. Коллизия даёт ошибку вклада, а не молчаливое затирание.
+
+Решение плана от этой поправки не меняется — два view с разными id остаются двумя view, — но
+основание другое: id обязаны различаться, потому что совпадение отвергается, а не только потому что
+так рекомендовано. `activationEvents` c `onView:<id>` — часть той же цитаты (см. также факт 56 про
+то, что на планке 1.85 это объявление уже не обязательно).
 
 **6. `config.` в `when` документирован для настроек, вычисляемых в boolean.** Тип: цитата.
 `vscode-docs/api/references/when-clause-contexts.md:270` (`curl` + `grep -n 'config\.'`):
@@ -529,10 +557,14 @@ for a change written by the extension's own `WorkspaceConfiguration.update()` ca
 > `export function createTreeView<T>(viewId: string, options: TreeViewOptions<T>): TreeView<T>;`
 
 `vscode.d.ts:11852` (`export interface TreeViewOptions<T> {`) с полями `treeDataProvider`
-(`:1855-1857`), `showCollapseAll?: boolean` (`:1862`), `canSelectMany?: boolean` (`:1868`),
-`dragAndDropController?: TreeDragAndDropController<T>` (`:1873`),
-`manageCheckboxStateManually?: boolean` (описано текстом, поле объявлено дальше в том же
-интерфейсе).
+(`:11857`), `showCollapseAll?: boolean` (`:11862`), `canSelectMany?: boolean` (`:11869`),
+`dragAndDropController?: TreeDragAndDropController<T>` (`:11874`),
+`manageCheckboxStateManually?: boolean` (`:11912`). Номера проверяются
+`grep -n "treeDataProvider: TreeDataProvider<T>;\|showCollapseAll?: boolean;" dts-main.ts`.
+
+Ревизия round 06: в исходной редакции этой строки стояли `:1855-1857`, `:1862`, `:1868`, `:1873` —
+у трёх номеров потеряна ведущая цифра, а два разошлись с источником на единицу, то есть ссылка была
+невоспроизводима (находка qwen-09). Цитаты при этом верны — расходились только якоря.
 На планке 1.85.0: есть (`grep -n "export function createTreeView" dts185.ts` → строка 10933;
 поля `TreeViewOptions` — `grep -n "manageCheckboxStateManually\|dragAndDropController\|canSelectMany\|showCollapseAll" dts185.ts`, все найдены внутри интерфейса на строках 11092-11142).
 
@@ -898,6 +930,114 @@ view, а не остаётся пустой рамкой. Явно провер�
 (проект использует GitHub, не GitLab CI, где переменная называлась бы иначе, — сама подстановка
 `runner.os` не проверялась отдельно и специфична для примера, взятого из GitHub Actions workflow).
 
+**56. `onView:<id>` возникает, когда view с этим id РАСКРЫТ в сайдбаре; на планке 1.85 само
+объявление уже не требуется.** Тип: цитата.
+`vscode-docs/api/references/activation-events.md:146-156`
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode-docs/main/api/references/activation-events.md | sed -n '144,156p'`):
+> «This activation event is emitted and interested extensions will be activated whenever a view of
+> the specified id is expanded in the VS Code sidebar. Built-in views do not emit an activation
+> event.»
+> «The activation event below will fire whenever a view with the `nodeDependencies` id is visible:»
+> «**Note**: Beginning with VS Code 1.74.0, views contributed by your extension do not require a
+> corresponding `onView` activation event declaration for your extension to be activated.»
+
+**Цитата приведена целиком намеренно** (находка claude-16): в первой редакции этой строки она
+обрывалась перед двумя следующими абзацами, а они меняют картину дважды. Во-первых, источник
+называет условие и «expanded», и «visible» — то есть точная граница события документацией не
+задана, и выводить из неё что-то тоньше «view должен стать видимым» нельзя. Во-вторых, начиная с
+1.74 объявление `onView` не требуется вовсе, а планка проекта — 1.85, то есть перечисленные в
+манифесте `onView:<id>` на целевой планке избыточны.
+
+Следствие для плана: избыточные объявления оставлены сознательно — они работают на любой версии и
+читаются как документация к манифесту, — но замкнутый круг (факт 57) они не разрывают и разорвать
+не могли: автоматически выведенное событие имеет ровно ту же предпосылку «view стал видимым».
+
+**57. Собственный context key в `when` view + `onView` как единственное событие активации дают
+замкнутый круг.** Тип: вывод. Посылки: факт 56 (событие возникает при раскрытии view); факт 47
+(`activeViewDescriptors` фильтруется по `when`, и контейнер скрывается, когда ни один view не
+проходит условие); факт 6 (значение собственного context key выставляет само расширение через
+`setContext`).
+
+Следствие: view, чей `when` ложен, раскрыть нельзя — значит `onView:<id>` не возникнет; ключ при
+этом ставит только код расширения, который без активации не исполняется. Ни одно из решений 03-C не
+разрывает круг само: ключи выставляются «при активации», а активироваться нечему.
+
+Это **не** проверено живым прогоном. Попытка проверки описана честно: пробный тест под
+`@vscode/test-cli` показал `isActive === false` до и после `executeCommand('projectsTree.view.focus')`,
+но тот же результат получился и на манифесте **без** `when` — то есть проба измеряла поведение
+тестового хоста, а не наличие круга, и доказательством ни в одну сторону не является.
+
+Решение принято по стоимости ошибки, а не по вердикту: добавлен `onStartupFinished` (факт 58).
+Если круга нет, лишнее событие активации стоит один обход корней на старте окна (18 мс на 181
+реальном узле, измерено); если круг есть — без этого события дерево не появляется никогда, на
+свежей установке. Условие пересмотра — живая проверка на чистом профиле.
+
+**58. `onStartupFinished` — активация через некоторое время после старта, не замедляющая старт.**
+Тип: цитата. `vscode-docs/api/references/activation-events.md:222` (та же команда, `grep -n -A 3
+"^## onStartupFinished"`):
+> «This activation event is emitted and interested extensions will be activated **some time after**
+> VS Code starts up. This is similar to the `*` activation event, but it will not slow down VS Code
+> startup. Currently, this event is emitted after all the `*` activated extensions have finished
+> activating.»
+
+Следствие: это документированная замена `*`, не ускоряющая ничего, но и не задерживающая окно.
+Пара `onStartupFinished` + `onView:<id>` для каждого view сохраняет раннюю активацию, когда
+пользователь сам открывает дерево, и гарантирует выставление context keys, когда не открывает.
+
+**59. Путь IPC-сокета редактора ограничен 103 символами на macOS и 107 на Linux; при превышении
+редактор печатает предупреждение, а сокет не открывается.** Тип: цитата.
+`microsoft/vscode@main src/vs/base/parts/ipc/node/ipc.net.ts:739-742`
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/base/parts/ipc/node/ipc.net.ts | sed -n '735,748p'`):
+> ```ts
+> const safeIpcPathLengths: { [platform: number]: number } = {
+> 	[Platform.Linux]: 107,
+> 	[Platform.Mac]: 103
+> };
+> ```
+
+Там же `:807-811`:
+> ```ts
+> function validateIPCHandleLength(handle: string): void {
+> 	const limit = safeIpcPathLengths[platform];
+> 	if (typeof limit === 'number' && handle.length >= limit) {
+> 		// https://nodejs.org/api/net.html#net_identifying_paths_for_ipc_connections
+> 		console.warn(`WARNING: IPC handle "${handle}" is longer than ${limit} chars, try a shorter --user-data-dir`);
+> 	}
+> }
+> ```
+
+Наблюдение, из-за которого строка появилась (round 06, находка claude-07 — решение опиралось на это
+ограничение, не имея под ним строки): при запуске `test:integration` из этого репозитория с
+дефолтным `--user-data-dir` (`packages/projects-tree/.vscode-test/user-data/`) редактор напечатал
+ровно это предупреждение и затем упал на старте:
+> `WARNING: IPC handle "…/packages/projects-tree/.vscode-test/user-data/1.13-main.sock" is longer than 103 chars, try a shorter --user-data-dir`
+> `Error: listen EINVAL: invalid argument …/user-data/1.13-main.sock`
+
+Следствие: предупреждение сообщает о превышении, а падает `listen` — то есть ограничение жёсткое, а
+не косметическое, и путь `--user-data-dir` обязан быть коротким независимо от глубины checkout.
+
+**60. Один `TreeDataProvider` на два `TreeView` документацией не запрещён и не разрешён.** Тип:
+вывод. Посылка — сигнатура `createTreeView(viewId, options)` (факт 39): она принимает провайдер на
+каждый view и никак не ограничивает передачу одного и того же экземпляра дважды; утверждения о
+разделяемом провайдере в документации нет ни в одну сторону.
+
+Следствие, названное как принятый риск, а не как факт: решение 03-C регистрирует один провайдер на
+оба id, поэтому `onDidChangeTreeData` у них общий и обновление приходит в оба view — что здесь и
+требуется. Подтверждено только прогоном: интеграционный сьют поднимает настоящий редактор, оба view
+объявлены, расширение активируется и дерево строится. Условие пересмотра — расхождение поведения
+двух view при одном провайдере на какой-либо версии редактора.
+
+**61. View, скрытый своим `when`, не опрашивается платформой.** Тип: вывод. Посылки — факт 47
+(`activeViewDescriptors` фильтруется по тому же `when`, что объявлен у view, и пересчитывается на
+каждое изменение контекста) и факт 56 (событие активации привязано к тому, что view становится
+видимым). Скрытый view не входит в активные дескрипторы, не рендерится и, следовательно, не
+запрашивает детей.
+
+Следствие для 03-C: регистрация провайдера на оба id безопасна — скрытый view не приводит ни к
+обходу ФС, ни к вызову `getChildren`. Прямой цитаты «hidden view is never queried» в документации
+нет, поэтому это вывод, а не цитата (находка claude-06: решение опиралось на это утверждение, не
+имея под ним строки).
+
 ## Опровергнутые утверждения предыдущих ревизий
 
 Секция ведётся намеренно: план однажды уже построил на каждом из них решение.
@@ -918,4 +1058,5 @@ view, а не остаётся пустой рамкой. Явно провер�
 | «`Terminal.shellIntegration` есть, но ненадёжен» | 3 | Факт 13: на планке 1.85 его нет вовсе |
 | «`fileMatch` — шаблон имени, а не путь» | 3 | Факт 17: принимает и глоб по пути; ограничение в другом — путь машинозависим |
 | «`ThemeColor.id` доступен на планке 1.85» | round 04 (факт 43) | Класс на 1.85 объявляет только конструктор; `readonly id` появляется позже. Вердикт о доступности был снят грепом по конструктору, а опиралось решение на свойство |
+| «Платформа не отвергает коллизию view id — различие id это соглашение» | round 04 (факт 5) | `viewsExtensionPoint.ts:473-480`: две проверки и `collector.error` на дубликат, локально и против глобального реестра |
 | «Кастомный контейнер `viewsContainers.activitybar` оставляет пустую иконку в Activity Bar, когда его единственный view скрыт `when`» | round 04 (claim к 03-C) | Факт 47: `hideIfEmpty: true` зашит безусловно для всех расширений в `registerCustomViewContainer`, и пересчёт реактивен — иконка гаснет вместе с view |

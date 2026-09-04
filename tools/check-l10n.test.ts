@@ -11,10 +11,29 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
 
+// Prepended to every fixture. Extraction binds `l10n` through the file's own imports rather than by
+// matching the identifier text (round 06, codex-07 / claude-12), so a fixture without the import is
+// correctly not an l10n call at all — the harness has to look like a real source file.
+const VSCODE_IMPORT = "import * as vscode from 'vscode';\n";
+
+/**
+Same as `withTempSourceFile` but writes the fixture verbatim — these cases supply their own import
+line, since the import is precisely what is under test.
+*/
+function withVerbatimSourceFile(source: string, run: (dir: string) => void): void {
+  const dir = mkdtempSync(nodePath.join(tmpdir(), 'check-l10n-test-'));
+  try {
+    writeFileSync(nodePath.join(dir, 'sample.ts'), source, 'utf8');
+    run(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function withTempSourceFile(contents: string, run: (dir: string) => void): void {
   const dir = mkdtempSync(nodePath.join(tmpdir(), 'check-l10n-test-'));
   try {
-    writeFileSync(nodePath.join(dir, 'sample.ts'), contents, 'utf8');
+    writeFileSync(nodePath.join(dir, 'sample.ts'), VSCODE_IMPORT + contents, 'utf8');
     run(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -90,10 +109,14 @@ describe('extractRuntimeKeys', () => {
     const dir = mkdtempSync(nodePath.join(tmpdir(), 'check-l10n-test-'));
     try {
       mkdirSync(nodePath.join(dir, 'nested'));
-      writeFileSync(nodePath.join(dir, 'nested', 'a.ts'), "vscode.l10n.t('Nested');\n", 'utf8');
+      writeFileSync(
+        nodePath.join(dir, 'nested', 'a.ts'),
+        VSCODE_IMPORT + "vscode.l10n.t('Nested');\n",
+        'utf8',
+      );
       writeFileSync(
         nodePath.join(dir, 'a.test.ts'),
-        "vscode.l10n.t('Should not be picked up');\n",
+        VSCODE_IMPORT + "vscode.l10n.t('Should not be picked up');\n",
         'utf8',
       );
       writeFileSync(nodePath.join(dir, 'a.d.ts'), 'declare const x: string;\n', 'utf8');
@@ -111,5 +134,58 @@ describe('extractRuntimeKeys', () => {
 describe('module wiring', () => {
   it('ts.createSourceFile is available', () => {
     expect(typeof ts.createSourceFile).toBe('function');
+  });
+});
+
+describe('l10n binding resolution', () => {
+  /**
+  This is the form the previous, text-matching extractor lost without a word: the string reached
+  neither the bundle nor the error report, so `l10n:check` stayed green while the UI went English.
+  */
+  it('extracts through an aliased named import', () => {
+    withVerbatimSourceFile(
+      "import { l10n as i18n } from 'vscode';\ni18n.t('Aliased');\n",
+      (dir) => {
+        const { keys, errors } = extractRuntimeKeys(dir);
+        expect(errors).toEqual([]);
+        expect(keys.map((k) => k.key)).toEqual(['Aliased']);
+      },
+    );
+  });
+
+  it('extracts through a plain named import', () => {
+    withVerbatimSourceFile("import { l10n } from 'vscode';\nl10n.t('Named');\n", (dir) => {
+      const { keys, errors } = extractRuntimeKeys(dir);
+      expect(errors).toEqual([]);
+      expect(keys.map((k) => k.key)).toEqual(['Named']);
+    });
+  });
+
+  /**
+  A binding used other than as the receiver of a direct `.t(...)` call must fail loudly rather than
+  be skipped — the whole point of the change is that an unextractable form is reported, not lost.
+  */
+  it('reports an error when l10n is aliased to a bare local', () => {
+    const source = "import { l10n } from 'vscode';\nconst t = l10n.t;\nvoid t('Indirect');\n";
+    withVerbatimSourceFile(source, (dir) => {
+      const { keys, errors } = extractRuntimeKeys(dir);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.detail).toContain('receiver of a direct');
+      expect(keys).toEqual([]);
+    });
+  });
+
+  /**
+  An identifier merely named `l10n` but not imported from `vscode` is not our call.
+  */
+  it('ignores an l10n-looking identifier that is not the vscode import', () => {
+    withVerbatimSourceFile(
+      "const l10n = { t: (s: string) => s };\nl10n.t('Not ours');\n",
+      (dir) => {
+        const { keys, errors } = extractRuntimeKeys(dir);
+        expect(errors).toEqual([]);
+        expect(keys).toEqual([]);
+      },
+    );
   });
 });

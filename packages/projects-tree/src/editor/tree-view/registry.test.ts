@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_VERDICT } from '../../projects/classification/index.js';
 import type { ClassifiedNode } from '../../projects/discovery/index.js';
-import { NodeRegistry, nodeKey } from './registry.js';
+import { NodeRegistry, nodeKey, RootGroupRegistry, treeElementKey } from './registry.js';
+import type { RootGroupNode } from './root-group.js';
 
 function makeNode(
   rootId: string,
@@ -94,5 +95,54 @@ describe('nodeKey', () => {
   it('combines rootId and pathFromRoot so overlapping roots cannot collide', () => {
     expect(nodeKey('root-a', 'x/y')).toBe('root-a:x/y');
     expect(nodeKey('root-a', 'x/y')).not.toBe(nodeKey('root-b', 'x/y'));
+  });
+});
+
+describe('treeElementKey', () => {
+  /**
+  The platform matches remembered expansion by `TreeItem.id` (api-facts.md, fact 27). If this key
+  and the id `item.ts` assigns ever diverge, expansion is recorded under a name the view never
+  looks up, and the feature silently does nothing.
+  */
+  it('keys a node by rootId and path, not path alone', () => {
+    expect(treeElementKey(makeNode('/a', 'p'))).toBe('/a:p');
+    expect(treeElementKey(makeNode('/b', 'p'))).not.toBe(treeElementKey(makeNode('/a', 'p')));
+  });
+
+  it('keys a root group by its rootId in a separate namespace', () => {
+    const group: RootGroupNode = { kind: 'rootGroup', rootId: '/a', label: 'A', children: [] };
+    expect(treeElementKey(group)).toBe('root:/a');
+  });
+});
+
+describe('retainOnly', () => {
+  /**
+  `canonicalize` only ever adds and updates, so without this sweep the registry keeps an entry for
+  every node it has ever seen — including directories deleted from disk. That is not a tidiness
+  issue: `ProjectsTreeProvider` prunes expansion state against the live tree, and a registry that
+  never forgets made an earlier version of that prune keep exactly the keys it was meant to drop.
+  */
+  it('drops canonical nodes that are no longer live, keeps the ones that are', () => {
+    const registry = new NodeRegistry();
+    const stays = registry.canonicalize(makeNode('/a', 'stays'));
+    registry.canonicalize(makeNode('/a', 'goes'));
+
+    registry.retainOnly(new Set([treeElementKey(stays)]));
+
+    // Identity is the observable: a key that survived returns the same object, a dropped one does
+    // not — which is what the tree view's selection and expansion state hang on (fact 4).
+    expect(registry.canonicalize(makeNode('/a', 'stays'))).toBe(stays);
+    expect(registry.canonicalize(makeNode('/a', 'goes'))).not.toBe(stays);
+  });
+
+  it('drops a root group whose root is gone from the live set', () => {
+    const groups = new RootGroupRegistry();
+    const kept = groups.canonicalize('/a', 'A', []);
+    const dropped = groups.canonicalize('/b', 'B', []);
+
+    groups.retainOnly(new Set([treeElementKey(kept)]));
+
+    expect(groups.canonicalize('/a', 'A', [])).toBe(kept);
+    expect(groups.canonicalize('/b', 'B', [])).not.toBe(dropped);
   });
 });

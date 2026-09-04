@@ -19,9 +19,10 @@ import {
   RootGroupRegistry,
 } from '../../src/editor/tree-view/index.js';
 import type { ConfiguredRoot } from '../../src/editor/configuration/index.js';
+import type { ExpansionState } from '../../src/editor/tree-view/expansion.js';
 import { isRootGroupNode, type TreeElement } from '../../src/editor/tree-view/root-group.js';
 import type { ClassifiedNode } from '../../src/projects/discovery/index.js';
-import { makeTempRoot, removeDir } from './temp-tree.js';
+import { makeProjectDir, makeTempRoot, removeDir } from './temp-tree.js';
 
 function findByName(elements: readonly TreeElement[], name: string): ClassifiedNode {
   const found = elements.find(
@@ -55,13 +56,16 @@ suite('refresh redraws a branch through stable node identity', () => {
       () => [root],
       () => 'auto',
       createNodeFileSystemReader(),
-      DEFAULT_RULES,
+      () => DEFAULT_RULES,
       new NodeRegistry(),
       new RootGroupRegistry(),
       // Nothing is remembered as expanded: these suites assert tree content and node identity, not
-      // the expansion store (which has its own unit tests). `false` means "no opinion" — item.ts
-      // then uses its own per-kind default (api-facts.md, fact 41).
-      () => false,
+      // the expansion store (which has its own unit tests). `stateOf` returning `undefined` means "no
+      // opinion" — item.ts then uses its own per-kind default (api-facts.md, fact 41).
+      {
+        stateOf: (): ExpansionState | undefined => undefined,
+        retainOnly: (): PromiseLike<void> | undefined => undefined,
+      },
     );
 
     let redrawCount = 0;
@@ -89,5 +93,58 @@ suite('refresh redraws a branch through stable node identity', () => {
     );
 
     provider.dispose();
+  });
+});
+
+suite('expansion state is pruned by refresh itself', () => {
+  let rootDir: string;
+
+  setup(async () => {
+    rootDir = await makeTempRoot('projects-tree-prune');
+  });
+
+  teardown(async () => {
+    await removeDir(rootDir);
+  });
+
+  /**
+  The prune has to happen inside refresh(), not at a call site the caller supplies: unwiring it
+  from extension.ts was caught by nothing — not the unit tests, not knip, since retainOnly is a
+  method rather than an export (round 06 review, qwen-03). This asserts the behaviour instead of
+  the wiring: refresh reports exactly the live keys, so a node that leaves the tree cannot keep
+  its stored expansion state.
+  */
+  test('refresh reports the live keys, and drops one that leaves the tree', async () => {
+    await makeProjectDir(rootDir, 'stays');
+    await makeProjectDir(rootDir, 'goes');
+
+    const pruned: string[][] = [];
+    const root: ConfiguredRoot = { id: 'r1', path: rootDir };
+    const provider = new ProjectsTreeProvider(
+      () => [root],
+      () => 'auto',
+      createNodeFileSystemReader(),
+      () => DEFAULT_RULES,
+      new NodeRegistry(),
+      new RootGroupRegistry(),
+      {
+        stateOf: (): ExpansionState | undefined => undefined,
+        retainOnly: (keys): PromiseLike<void> | undefined => {
+          pruned.push([...keys]);
+          return undefined;
+        },
+      },
+    );
+
+    await provider.refresh();
+    assert.equal(pruned.length, 1, 'refresh must prune exactly once');
+    assert.ok(pruned[0]?.includes('r1:goes'), `expected r1:goes in ${String(pruned[0])}`);
+    assert.ok(pruned[0]?.includes('r1:stays'));
+
+    await removeDir(path.join(rootDir, 'goes'));
+    await provider.refresh();
+    assert.equal(pruned.length, 2);
+    assert.ok(pruned[1]?.includes('r1:stays'), 'the surviving node must stay live');
+    assert.ok(!pruned[1]?.includes('r1:goes'), 'the deleted node must not be reported live');
   });
 });

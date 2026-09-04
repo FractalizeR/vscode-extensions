@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ACTIVITY_BAR_VIEW_ID,
-  ALL_VIEW_IDS,
-  EXPLORER_VIEW_ID,
-  locationContextKeys,
-} from './location.js';
+import { locationContextKeys } from '../context-keys/names.js';
+import { ACTIVITY_BAR_VIEW_ID, ALL_VIEW_IDS, EXPLORER_VIEW_ID } from './location.js';
 
 describe('locationContextKeys', () => {
   it('makes exactly one key true for a placement mode', () => {

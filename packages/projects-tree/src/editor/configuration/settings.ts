@@ -28,6 +28,20 @@ export interface RootsReadResult {
   `{ path, label? }` object, reported to the user by the caller rather than silently dropped.
   */
   readonly invalid: readonly string[];
+  /**
+  Ids (== paths, see `parseRootEntry`) of entries that repeated one already accepted; only the first
+  occurrence of each id survives into `roots`. Kept apart from `invalid` — a duplicate is a
+  well-formed root, just a repeat, so warning text built for "not an absolute path" would mislabel it
+  (review-06, claude-01).
+
+  Detected by exact string equality on `id` only. Two *different* strings can still name the same
+  directory — a trailing separator, a symlink, or a case difference on a case-insensitive filesystem
+  — and this reader deliberately does not catch any of those: normalizing an id would mean this
+  synchronous, side-effect-free function making a `realpath`/case-lookup filesystem call, and would
+  also change the id `discoverProjectTree`/`NodeKey` key on for every existing root, not just
+  duplicated ones. Left as a named limitation rather than solved here.
+  */
+  readonly duplicates: readonly string[];
 }
 
 export function readRoots(): RootsReadResult {
@@ -35,15 +49,22 @@ export function readRoots(): RootsReadResult {
   const values = Array.isArray(raw) ? raw : [];
   const roots: ConfiguredRoot[] = [];
   const invalid: string[] = [];
+  const duplicates: string[] = [];
+  const seenIds = new Set<string>();
   for (const value of values) {
     const parsed = parseRootEntry(value);
     if (parsed === undefined) {
       invalid.push(typeof value === 'string' ? value : JSON.stringify(value));
       continue;
     }
+    if (seenIds.has(parsed.id)) {
+      duplicates.push(parsed.id);
+      continue;
+    }
+    seenIds.add(parsed.id);
     roots.push(parsed);
   }
-  return { roots, invalid };
+  return { roots, invalid, duplicates };
 }
 
 function parseRootEntry(value: unknown): ConfiguredRoot | undefined {
