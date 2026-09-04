@@ -102,6 +102,52 @@
         "title": "%command.addRoot.title%",
         "category": "%configuration.title%",
         "icon": "$(add)"
+      },
+      {
+        "command": "projectsTree.runPrimaryAction",
+        "title": "%command.runPrimaryAction.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.runAction",
+        "title": "%command.runAction.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.showActions",
+        "title": "%command.showActions.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.openInNewWindow",
+        "title": "%command.openInNewWindow.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.openInCurrentWindow",
+        "title": "%command.openInCurrentWindow.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.openProject",
+        "title": "%command.openProject.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.hide",
+        "title": "%command.hide.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.removeRoot",
+        "title": "%command.removeRoot.title%",
+        "category": "%configuration.title%"
+      },
+      {
+        "command": "projectsTree.manageHidden",
+        "title": "%command.manageHidden.title%",
+        "category": "%configuration.title%",
+        "icon": "$(eye)"
       }
     ],
     "menus": {
@@ -117,6 +163,11 @@
           "group": "navigation"
         },
         {
+          "command": "projectsTree.manageHidden",
+          "when": "view == projectsTree.view",
+          "group": "navigation"
+        },
+        {
           "command": "projectsTree.refresh",
           "when": "view == projectsTree.explorerView",
           "group": "navigation"
@@ -125,6 +176,73 @@
           "command": "projectsTree.addRoot",
           "when": "view == projectsTree.explorerView",
           "group": "navigation"
+        },
+        {
+          "command": "projectsTree.manageHidden",
+          "when": "view == projectsTree.explorerView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "projectsTree.openInNewWindow",
+          "when": "view == projectsTree.view && viewItem == project",
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectsTree.openInCurrentWindow",
+          "when": "view == projectsTree.view && viewItem == project",
+          "group": "navigation@2"
+        },
+        {
+          "command": "projectsTree.showActions",
+          "when": "view == projectsTree.view && viewItem == project",
+          "group": "navigation@3"
+        },
+        {
+          "command": "projectsTree.hide",
+          "when": "view == projectsTree.view && (viewItem == project || viewItem == folder)",
+          "group": "navigation@4"
+        },
+        {
+          "command": "projectsTree.removeRoot",
+          "when": "view == projectsTree.view && viewItem == rootGroup",
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectsTree.openInNewWindow",
+          "when": "view == projectsTree.explorerView && viewItem == project",
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectsTree.openInCurrentWindow",
+          "when": "view == projectsTree.explorerView && viewItem == project",
+          "group": "navigation@2"
+        },
+        {
+          "command": "projectsTree.showActions",
+          "when": "view == projectsTree.explorerView && viewItem == project",
+          "group": "navigation@3"
+        },
+        {
+          "command": "projectsTree.hide",
+          "when": "view == projectsTree.explorerView && (viewItem == project || viewItem == folder)",
+          "group": "navigation@4"
+        },
+        {
+          "command": "projectsTree.removeRoot",
+          "when": "view == projectsTree.explorerView && viewItem == rootGroup",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "projectsTree.runPrimaryAction",
+          "when": "false"
+        },
+        {
+          "command": "projectsTree.runAction",
+          "when": "false"
         }
       ]
     },
@@ -190,6 +308,19 @@
           "default": "activityBar",
           "scope": "window",
           "description": "%configuration.location.description%"
+        },
+        "projectsTree.maxDepth": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 0,
+          "scope": "machine",
+          "description": "%configuration.maxDepth.description%"
+        },
+        "projectsTree.defaultAction": {
+          "type": "string",
+          "default": "builtin.openInNewWindow",
+          "scope": "machine",
+          "description": "%configuration.defaultAction.description%"
         }
       }
     }

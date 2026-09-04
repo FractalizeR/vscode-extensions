@@ -19,6 +19,7 @@ import {
   DEFAULT_RULES,
   loadRulesFile,
   type Diagnostic,
+  type RawActionDefinition,
   type Rule,
 } from '../../projects/classification/index.js';
 
@@ -40,6 +41,13 @@ export function rulesFilePath(context: RulesFileLocation): string {
 export interface CanonicalRulesResult {
   readonly rules: readonly Rule[];
   /**
+  Always present, `[]` whenever no rules file loaded (absent, unreadable, or invalid) — mirrors
+  `LoadedRulesFile.actions`'s own "stable array, not optional" contract (`rules-file.ts`). Package
+  04-C's composition root feeds this into `createActionRegistry` alongside `BUILT_IN_ACTIONS`, so a
+  rules file's own action declarations are runnable, not just referenceable by `primaryAction`.
+  */
+  readonly actions: readonly RawActionDefinition[];
+  /**
   Non-empty only when a rules file existed and failed to read, parse or validate. An absent file is
   not an error (see `loadCanonicalRules`'s doc comment) and reports no diagnostics even though
   `rules` still falls back to `DEFAULT_RULES` in that case too — callers must not use "diagnostics
@@ -48,7 +56,11 @@ export interface CanonicalRulesResult {
   readonly diagnostics: readonly Diagnostic[];
 }
 
-const FALLBACK_RESULT: CanonicalRulesResult = { rules: DEFAULT_RULES, diagnostics: [] };
+const FALLBACK_RESULT: CanonicalRulesResult = {
+  rules: DEFAULT_RULES,
+  actions: [],
+  diagnostics: [],
+};
 
 /**
  * Loads the canonical rules file, falling back to `DEFAULT_RULES` whenever it cannot be used as-is:
@@ -79,9 +91,11 @@ const FALLBACK_RESULT: CanonicalRulesResult = { rules: DEFAULT_RULES, diagnostic
  * for a name the defaults skip) — and it is the direction that fails safe, because the alternative
  * makes the user's first edit break project detection.
  *
- * `knownActionIds` defaults to `[]`: no built-in action registry is wired into the composition root
- * yet (docs/plans/projects-tree/04-actions.md's action model has not reached `extension.ts`), so a
- * rules file's `primaryAction` may currently reference only an action the file itself declares.
+ * `knownActionIds` names ids valid as a `primaryAction` reference *besides* whatever the file's own
+ * `actions` section declares (`loadRulesFile`'s own doc comment) — package 04-C's composition root
+ * passes `BUILT_IN_ACTIONS`' ids here, closing the debt this module's previous revision left open:
+ * until then, a rules file's `primaryAction` could reference only an action the file itself
+ * declared, never a built-in one, because nothing outside the file was ever passed in.
  */
 export async function loadCanonicalRules(
   context: RulesFileLocation,
@@ -95,16 +109,21 @@ export async function loadCanonicalRules(
     if (isFileNotFound(error)) return FALLBACK_RESULT;
     return {
       rules: DEFAULT_RULES,
+      actions: [],
       diagnostics: [{ path: '', message: `could not read rules file: ${describeError(error)}` }],
     };
   }
 
   const { file, diagnostics } = loadRulesFile(content, knownActionIds);
-  if (file === undefined) return { rules: DEFAULT_RULES, diagnostics };
-  return { rules: [...file.rules, ...DEFAULT_RULES], diagnostics: [] };
+  if (file === undefined) return { rules: DEFAULT_RULES, actions: [], diagnostics };
+  return { rules: [...file.rules, ...DEFAULT_RULES], actions: file.actions, diagnostics: [] };
 }
 
-function isFileNotFound(error: unknown): boolean {
+/**
+ * Shared with `store.ts` (the write side, package 04-E) — both modules stat/read the same file and
+ * need to tell "absent" apart from "exists but unreadable" the same way.
+ */
+export function isFileNotFound(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&
@@ -113,6 +132,6 @@ function isFileNotFound(error: unknown): boolean {
   );
 }
 
-function describeError(error: unknown): string {
+export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

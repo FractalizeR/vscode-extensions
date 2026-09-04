@@ -28,7 +28,13 @@ vi.mock('vscode', () => ({
   },
 }));
 
-const { onTreeConfigurationChanged, readRoots, readShowRootNodes } = await import('./settings.js');
+const {
+  onTreeConfigurationChanged,
+  readDefaultAction,
+  readMaxDepth,
+  readRoots,
+  readShowRootNodes,
+} = await import('./settings.js');
 
 describe('readRoots', () => {
   it('accepts non-empty absolute path strings and reports everything else as invalid', () => {
@@ -154,6 +160,51 @@ describe('readShowRootNodes', () => {
   });
 });
 
+describe('readMaxDepth', () => {
+  it('passes through a non-negative integer', () => {
+    state.values.maxDepth = 0;
+    expect(readMaxDepth()).toBe(0);
+
+    state.values.maxDepth = 7;
+    expect(readMaxDepth()).toBe(7);
+  });
+
+  it('defaults to 4 for unset, negative, non-integer, or non-numeric values', () => {
+    state.values.maxDepth = undefined;
+    expect(readMaxDepth()).toBe(4);
+
+    state.values.maxDepth = -1;
+    expect(readMaxDepth()).toBe(4);
+
+    state.values.maxDepth = 2.5;
+    expect(readMaxDepth()).toBe(4);
+
+    state.values.maxDepth = 'deep';
+    expect(readMaxDepth()).toBe(4);
+
+    state.values.maxDepth = NaN;
+    expect(readMaxDepth()).toBe(4);
+  });
+});
+
+describe('readDefaultAction', () => {
+  it('passes through a non-empty string', () => {
+    state.values.defaultAction = 'builtin.openInCurrentWindow';
+    expect(readDefaultAction()).toBe('builtin.openInCurrentWindow');
+  });
+
+  it('defaults to builtin.openInNewWindow for unset, empty, or non-string values', () => {
+    state.values.defaultAction = undefined;
+    expect(readDefaultAction()).toBe('builtin.openInNewWindow');
+
+    state.values.defaultAction = '';
+    expect(readDefaultAction()).toBe('builtin.openInNewWindow');
+
+    state.values.defaultAction = 42;
+    expect(readDefaultAction()).toBe('builtin.openInNewWindow');
+  });
+});
+
 describe('onTreeConfigurationChanged', () => {
   it('invokes the listener when either roots or showRootNodes is affected, not otherwise', () => {
     const listener = vi.fn();
@@ -166,6 +217,17 @@ describe('onTreeConfigurationChanged', () => {
     expect(listener).toHaveBeenCalledTimes(2);
 
     state.configListener?.({ affectsConfiguration: () => false });
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('also invokes the listener when maxDepth or defaultAction is affected', () => {
+    const listener = vi.fn();
+    onTreeConfigurationChanged(listener);
+
+    state.configListener?.({ affectsConfiguration: (s) => s === 'projectsTree.maxDepth' });
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    state.configListener?.({ affectsConfiguration: (s) => s === 'projectsTree.defaultAction' });
     expect(listener).toHaveBeenCalledTimes(2);
   });
 });

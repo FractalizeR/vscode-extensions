@@ -143,12 +143,45 @@ export function readLocation(): TreeLocation {
   return raw === 'explorer' || raw === 'none' ? raw : DEFAULT_LOCATION;
 }
 
+/**
+Cost limiter for the walk (04-actions.md, package 04-B table): `discoverProjectTree` counts depth
+from the root itself, so 0 returns no children at all and 1 returns only each root's immediate
+children, unexpanded. `scope: machine` — a workspace cannot inflate the cost of scanning a
+machine it does not own.
+*/
+const DEFAULT_MAX_DEPTH = 4;
+
+/**
+Any value that is not a non-negative integer falls back to the default, matching `readShowRootNodes`
+and `readLocation`: a malformed setting must not throw or silently scan with `undefined` (which
+`discoverProjectTree` would treat differently only by accident).
+*/
+export function readMaxDepth(): number {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<unknown>('maxDepth');
+  return typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 ? raw : DEFAULT_MAX_DEPTH;
+}
+
+/**
+The id of the action `commands/actionPicker.ts` (package 04-C) runs when a node's verdict names no
+`primaryAction`. Read as an opaque string here — the set of valid ids belongs to
+`src/projects/actions/**`, which this module does not import, so nothing here can validate against
+it; an id that resolves to nothing is 04-C's problem to report.
+*/
+const DEFAULT_ACTION_ID = 'builtin.openInNewWindow';
+
+export function readDefaultAction(): string {
+  const raw = vscode.workspace.getConfiguration(SECTION).get<unknown>('defaultAction');
+  return typeof raw === 'string' && raw.length > 0 ? raw : DEFAULT_ACTION_ID;
+}
+
 export function onTreeConfigurationChanged(listener: () => void): vscode.Disposable {
   return vscode.workspace.onDidChangeConfiguration((event) => {
     if (
       event.affectsConfiguration(`${SECTION}.roots`) ||
       event.affectsConfiguration(`${SECTION}.showRootNodes`) ||
-      event.affectsConfiguration(`${SECTION}.location`)
+      event.affectsConfiguration(`${SECTION}.location`) ||
+      event.affectsConfiguration(`${SECTION}.maxDepth`) ||
+      event.affectsConfiguration(`${SECTION}.defaultAction`)
     ) {
       listener();
     }

@@ -159,6 +159,39 @@ describe('validateRules', () => {
     expect(validateRules(rules, [])).toEqual([]);
   });
 
+  it('reports propagate: true with neither color nor badge — nothing to raise on an ancestor', () => {
+    const rules = [rule({ verdict: { highlight: { propagate: true, description: 'x' } } })];
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/then/highlight/propagate' }),
+    );
+  });
+
+  it('rejects propagate: true carried only by an empty/whitespace badge', () => {
+    // A '' or ' ' badge is treated as no visible badge (same rule as the emptiness check above),
+    // so it must not count as something for propagate to raise either.
+    const rules = [rule({ verdict: { highlight: { propagate: true, badge: '  ' } } })];
+    const diagnostics = validateRules(rules, []);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ path: '/rules/0/then/highlight/propagate' }),
+    );
+  });
+
+  it('accepts propagate: true backed by color', () => {
+    const rules = [rule({ verdict: { highlight: { propagate: true, color: 'charts.red' } } })];
+    expect(validateRules(rules, [])).toEqual([]);
+  });
+
+  it('accepts propagate: true backed by a visible badge', () => {
+    const rules = [rule({ verdict: { highlight: { propagate: true, badge: '!' } } })];
+    expect(validateRules(rules, [])).toEqual([]);
+  });
+
+  it('does not flag propagate: false/absent regardless of what else is set', () => {
+    const rules = [rule({ verdict: { highlight: { description: 'x' } } })];
+    expect(validateRules(rules, [])).toEqual([]);
+  });
+
   it('returns every diagnostic for a rule set with several independent problems, not just the first', () => {
     // Regression: DoD requires "все диагностики" — proven broken/fixed in the session report by
     // making validateRules return only diagnostics[0] and observing this test go red.

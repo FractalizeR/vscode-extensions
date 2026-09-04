@@ -121,7 +121,8 @@
         "badge": { "type": "string", "maxLength": 2 },
         "icon": { "type": "string" },
         "description": { "type": "string" },
-        "sortWeight": { "type": "number" }
+        "sortWeight": { "type": "number" },
+        "propagate": { "type": "boolean" }
       }
     },
     "actionDefinition": {

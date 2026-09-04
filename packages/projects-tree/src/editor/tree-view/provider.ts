@@ -19,10 +19,11 @@ import { buildTopLevel } from './top-level.js';
 
 /**
  * Wires the core (`discoverProjectTree`) to `vscode.TreeDataProvider`. `getChildren` never reads
- * the filesystem itself — `refresh()` walks every configured root up to discovery's own
- * `maxDepth` default and hands the whole classified tree to `NodeRegistry`; `getChildren` only
- * reads back children the walk already computed. The tree still *renders* lazily (VS Code never
- * asks for a collapsed node's children), but per-node on-demand filesystem reads and their cache
+ * the filesystem itself — `refresh()` walks every configured root up to `getMaxDepth()` (falling
+ * back to discovery's own default when no supplier is given) and hands the whole classified tree
+ * to `NodeRegistry`; `getChildren` only reads back children the walk already computed. The tree
+ * still *renders* lazily (VS Code never asks for a collapsed node's children), but per-node
+ * on-demand filesystem reads and their cache
  * invalidation are `docs/plans/projects-tree/07-cache-and-reactivity.md`'s job, deliberately out of
  * this slice.
  *
@@ -66,6 +67,12 @@ export class ProjectsTreeProvider
     // a second call site a caller can forget, the way `decorations` below already does
     // (docs/plans/projects-tree/review-05/REPORT.md, M5).
     private readonly expansion: Pick<ExpansionStore, 'stateOf' | 'retainOnly'>,
+    // Optional, symmetrically with `decorations` below: every existing caller (unit and
+    // integration tests) constructs this provider without it and must keep compiling. Omitted, the
+    // walk keeps using `discoverProjectTree`'s own default — the behavior before this supplier
+    // existed. `projectsTree.maxDepth` (04-actions.md, package 04-B) is a cost limiter on the
+    // walk, not on rendering, so it belongs here rather than in `getChildren`.
+    private readonly getMaxDepth?: () => number,
     // Optional: this class works without a decoration carrier (every existing test constructs it
     // without one). When given, every `refresh()` feeds it the freshly built top level so
     // `FileDecoration`s stay in sync without a second call site the way an unwired feature would
@@ -137,9 +144,16 @@ export class ProjectsTreeProvider
 
     const cancellation = new CancellationSource();
     this.#activeCancellation = cancellation;
+    const maxDepth = this.getMaxDepth?.();
     let result;
     try {
-      result = await discoverProjectTree(roots, this.listRules(), this.fs, cancellation.signal);
+      result = await discoverProjectTree(
+        roots,
+        this.listRules(),
+        this.fs,
+        cancellation.signal,
+        maxDepth === undefined ? undefined : { maxDepth },
+      );
     } catch (error) {
       // A newer refresh() cancelled this one; its result never existed as far as the tree is
       // concerned. Any other error is a real failure and must propagate.

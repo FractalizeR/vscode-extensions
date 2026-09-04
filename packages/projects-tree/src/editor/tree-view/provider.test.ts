@@ -153,3 +153,91 @@ describe('ProjectsTreeProvider.refresh ordering', () => {
     expect(topLevelNames(provider)).toEqual(['fast']);
   });
 });
+
+/**
+`discoverProjectTree` is mocked at module scope (`vi.mock` above) so every other test in this file
+controls its own result without touching a filesystem. This suite deliberately restores the real
+implementation for one test: a supplier that only returns a number proves nothing about the walk
+itself, so the regression this package closes (`04-actions.md`, package 04-B — `maxDepth` reached
+the provider but nothing consumed it) needs the real depth-limiting logic in the loop, driven by a
+fake reader that records how deep it was actually asked to read.
+*/
+describe('ProjectsTreeProvider maxDepth', () => {
+  it("limits the real walk to getMaxDepth(), overriding discoverProjectTree's own default", async () => {
+    const actual = await vi.importActual<typeof import('../../projects/discovery/index.js')>(
+      '../../projects/discovery/index.js',
+    );
+    mockDiscover.mockImplementation(actual.discoverProjectTree);
+
+    // An infinite chain of single-child directories: with no ceiling, the walk would recurse
+    // forever (or at least well past the assertion below). Only `maxDepth` stops it.
+    let readDirectoryCalls = 0;
+    const fs: FileSystemReader = {
+      readDirectory: () => {
+        readDirectoryCalls += 1;
+        return Promise.resolve([{ name: 'd', type: 'dir' }]);
+      },
+      readFile: () => Promise.resolve(''),
+      identity: (path: string) => Promise.resolve(path),
+      realPath: (path: string) => Promise.resolve(path),
+    };
+
+    const provider = new ProjectsTreeProvider(
+      () => [{ id: 'r1', path: '/roots/r1' }],
+      () => 'never',
+      fs,
+      () => [],
+      new NodeRegistry(),
+      new RootGroupRegistry(),
+      {
+        stateOf: (): ExpansionState | undefined => undefined,
+        retainOnly: (): PromiseLike<void> | undefined => undefined,
+      },
+      () => 2,
+    );
+
+    await provider.refresh();
+
+    // maxDepth 2: the root itself (always read) plus one level of its children — a third read
+    // would mean the supplied depth was ignored.
+    expect(readDirectoryCalls).toBe(2);
+  });
+
+  it("falls back to discoverProjectTree's own default when no supplier is given", async () => {
+    const actual = await vi.importActual<typeof import('../../projects/discovery/index.js')>(
+      '../../projects/discovery/index.js',
+    );
+    mockDiscover.mockImplementation(actual.discoverProjectTree);
+
+    let readDirectoryCalls = 0;
+    const fs: FileSystemReader = {
+      readDirectory: () => {
+        readDirectoryCalls += 1;
+        return Promise.resolve([{ name: 'd', type: 'dir' }]);
+      },
+      readFile: () => Promise.resolve(''),
+      identity: (path: string) => Promise.resolve(path),
+      realPath: (path: string) => Promise.resolve(path),
+    };
+
+    const provider = new ProjectsTreeProvider(
+      () => [{ id: 'r1', path: '/roots/r1' }],
+      () => 'never',
+      fs,
+      () => [],
+      new NodeRegistry(),
+      new RootGroupRegistry(),
+      {
+        stateOf: (): ExpansionState | undefined => undefined,
+        retainOnly: (): PromiseLike<void> | undefined => undefined,
+      },
+    );
+
+    await provider.refresh();
+
+    // discovery's own default is 4 (docs/plans/projects-tree/02-core.md); unaffected by this
+    // package when the provider is constructed the old way, as every pre-existing caller still
+    // does.
+    expect(readDirectoryCalls).toBe(4);
+  });
+});

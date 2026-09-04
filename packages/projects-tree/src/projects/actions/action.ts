@@ -49,9 +49,25 @@ export type ActionSpec =
        */
       execute?: boolean;
       /**
-      A `render` template, target `{ kind: 'shell'; shell }` — same shell as `command`.
-      */
+       * A `render` template, target `{ kind: 'literal' }` — **not** `{ kind: 'shell' }` like
+       * `command`. `cwd` reaches `TerminalOptions.cwd` (api-facts.md fact 12), a VS Code API
+       * parameter that receives a plain path and hands it to no shell at all; shell-quoting it
+       * would put literal quote characters into the directory path the terminal is created in.
+       * An earlier revision rendered it with the `shell` target by copying `command`'s annotation
+       * without checking which sink each one actually reaches (review-07, native-claude-01) — every
+       * `cwd` broke, not only one containing shell metacharacters, because `TerminalOptions.cwd`
+       * never strips the quotes a shell target adds. Control-character rejection still applies
+       * unconditionally regardless of target (render.ts).
+       */
       cwd?: string;
+      /**
+       * A `render` template, target `{ kind: 'literal' }`. Reaches `TerminalOptions.name`
+       * (api-facts.md fact 12), a tab label no interpreter reads — but still worth rendering
+       * through `render`'s unconditional control-character rejection: an unrendered `${name}` would
+       * put a raw `\r` from a substituted value straight into the tab title, which a terminal's own
+       * rendering can turn into on-screen spoofing (render.ts's doc comment on why C0/DEL are always
+       * rejected).
+       */
       terminalName?: string;
     }
   | {

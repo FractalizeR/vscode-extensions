@@ -32,10 +32,23 @@ import { makeProjectDir, makeTempRoot, removeDir } from './temp-tree.js';
 
 const EXTENSION_ID = 'fractalizer.projects-tree';
 const VIEW_IDS = ['projectsTree.view', 'projectsTree.explorerView'];
+// Kept as a literal list, not an import of `ALL_COMMAND_IDS` (`editor/commands/registered-
+// commands.ts`): that constant is already cross-checked against `package.json` by
+// `manifest-contract.test.ts` (a vitest unit test, faster to run and already covering the same
+// drift); importing it here would make this assertion redundant with that one rather than an
+// independent check that the composition root actually registered what it claims to.
 const REGISTERED_COMMANDS = [
   'projectsTree.openProject',
   'projectsTree.refresh',
   'projectsTree.addRoot',
+  'projectsTree.removeRoot',
+  'projectsTree.hide',
+  'projectsTree.manageHidden',
+  'projectsTree.runPrimaryAction',
+  'projectsTree.runAction',
+  'projectsTree.showActions',
+  'projectsTree.openInNewWindow',
+  'projectsTree.openInCurrentWindow',
 ];
 
 suite('extension activation', () => {

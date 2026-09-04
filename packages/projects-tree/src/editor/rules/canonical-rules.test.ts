@@ -60,7 +60,7 @@ describe('loadCanonicalRules', () => {
 
   it('falls back to DEFAULT_RULES with no diagnostics when the file does not exist', async () => {
     const result = await loadCanonicalRules(location());
-    expect(result).toEqual({ rules: DEFAULT_RULES, diagnostics: [] });
+    expect(result).toEqual({ rules: DEFAULT_RULES, actions: [], diagnostics: [] });
   });
 
   it('falls back to DEFAULT_RULES, with diagnostics, for invalid JSON — never throws', async () => {
@@ -95,6 +95,52 @@ describe('loadCanonicalRules', () => {
     const { rules, diagnostics } = await loadCanonicalRules(location());
     expect(rules).toBe(DEFAULT_RULES);
     expect(diagnostics.some((d) => d.message.includes('duplicate rule id'))).toBe(true);
+  });
+
+  /**
+  Regression for the stage-03 debt this module's own doc comment named: production called
+  `loadCanonicalRules` with no `knownActionIds` at all, so a rule's `primaryAction` could reference
+  only an action the file itself declared — a reference to a built-in id (never passed in) was
+  rejected as unknown, even though the composition root wires the same built-in into every action
+  registry. Passing the id here is what package 04-C's `extension.ts` now does with
+  `BUILT_IN_ACTIONS.map(a => a.id)`.
+  */
+  it('accepts a primaryAction referencing an id supplied via knownActionIds, not declared by the file', async () => {
+    const raw = {
+      version: 1,
+      rules: [
+        {
+          id: 'open-in-new-window',
+          when: { kind: 'nameMatches', pattern: '^app$' },
+          // eslint-disable-next-line unicorn/no-thenable -- on-disk key, see rules-file.ts.
+          then: { primaryAction: 'builtin.openInNewWindow' },
+        },
+      ],
+    };
+    await writeFile(rulesFilePath(location()), JSON.stringify(raw), 'utf8');
+
+    const { rules, diagnostics } = await loadCanonicalRules(location(), [
+      'builtin.openInNewWindow',
+    ]);
+
+    expect(diagnostics).toEqual([]);
+    expect(rules[0]?.id).toBe('open-in-new-window');
+  });
+
+  it('surfaces the file-declared actions alongside the rules, not just their ids', async () => {
+    const raw = {
+      version: 1,
+      rules: [],
+      actions: [
+        { id: 'custom.opencode', spec: { kind: 'terminal', command: 'opencode', shell: 'zsh' } },
+      ],
+    };
+    await writeFile(rulesFilePath(location()), JSON.stringify(raw), 'utf8');
+
+    const { actions, diagnostics } = await loadCanonicalRules(location());
+
+    expect(diagnostics).toEqual([]);
+    expect(actions).toEqual(raw.actions);
   });
 
   it('reports, rather than throws, when the path is unreadable for a reason other than absence', async () => {

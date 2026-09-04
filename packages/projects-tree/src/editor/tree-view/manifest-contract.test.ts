@@ -8,9 +8,23 @@
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { locationContextKeys, ROOTS_CONTEXT_KEY } from '../context-keys/names.js';
 import { ACTIVITY_BAR_VIEW_ID, ALL_VIEW_IDS } from './location.js';
+
+// `commands/index.js` pulls in every command registration module for `ALL_COMMAND_IDS` below —
+// each does `import * as vscode from 'vscode'` at module scope (only *called* from inside a
+// `registerXCommand` function, never at import time), which needs *some* module to resolve to
+// outside a running editor. Nothing in this file invokes a command handler, so an empty stub is
+// enough — this mirrors the same need `item.test.ts` documents for the same reason.
+vi.mock('vscode', () => ({}));
+
+const {
+  ALL_COMMAND_IDS,
+  MANAGE_HIDDEN_COMMAND,
+  PROJECT_CONTEXT_MENU_COMMAND_IDS,
+  ROOT_GROUP_CONTEXT_MENU_COMMAND_IDS,
+} = await import('../commands/index.js');
 
 interface ViewContribution {
   readonly id: string;
@@ -221,6 +235,100 @@ describe('commands and the welcome screen', () => {
   it('gates the welcome screen on the roots context key the code sets', () => {
     for (const entry of manifest.contributes.viewsWelcome) {
       expect(entry.when).toBe(`!${ROOTS_CONTEXT_KEY}`);
+    }
+  });
+});
+
+describe('package 04-E: hide and root management menus', () => {
+  it('shows Manage Hidden in the view title menu on both views', () => {
+    const titleMenu = manifest.contributes.menus['view/title'] ?? [];
+    for (const id of ALL_VIEW_IDS) {
+      const forThisView = titleMenu
+        .filter((entry) => entry.when === `view == ${id}`)
+        .map((entry) => entry.command);
+      expect(forThisView, id).toContain(MANAGE_HIDDEN_COMMAND);
+    }
+  });
+
+  /**
+  Same duplication requirement `view/title` and the fixed project menu already have (fact 5): a
+  `view/item/context` entry scoped to one view id only offers "Remove Root" in that view, which
+  looks like a broken context menu on the other rather than a missing entry.
+  */
+  it('duplicates every fixed root-group context-menu command onto both view ids', () => {
+    const itemContextMenu = manifest.contributes.menus['view/item/context'] ?? [];
+    for (const id of ALL_VIEW_IDS) {
+      const forThisView = itemContextMenu
+        .filter((entry) => entry.when.includes(`view == ${id}`))
+        .map((entry) => entry.command);
+      for (const commandId of ROOT_GROUP_CONTEXT_MENU_COMMAND_IDS) {
+        expect(forThisView, `${id} is missing a menu entry for ${commandId}`).toContain(commandId);
+      }
+    }
+  });
+
+  /**
+  A root group carries no `Verdict`/`facts` (`tree-view/root-group.ts`) — "Remove Root" scoped to
+  `viewItem == project`/`folder` by mistake would show up on project nodes instead of (or as well
+  as) root groups, and silently do nothing useful there.
+  */
+  it('scopes every root-group context-menu entry to a rootGroup tree item', () => {
+    const itemContextMenu = manifest.contributes.menus['view/item/context'] ?? [];
+    const rootGroupCommands = new Set<string>(ROOT_GROUP_CONTEXT_MENU_COMMAND_IDS);
+    for (const entry of itemContextMenu) {
+      if (!rootGroupCommands.has(entry.command)) continue;
+      expect(entry.when, `${entry.command} has no viewItem guard`).toContain(
+        'viewItem == rootGroup',
+      );
+    }
+  });
+});
+
+describe('package 04-C: action commands and their menus', () => {
+  /**
+  Bidirectional by construction: an id in the manifest but not in `ALL_COMMAND_IDS` fails the
+  `toContain` on `registered`, an id registered but not contributed fails the `toContain` on
+  `declared` — either direction of drift turns one command into a menu item or keybinding target
+  that silently does nothing (same class of bug `manifest-contract.test.ts`'s file doc comment
+  already names for view ids).
+  */
+  it('declares exactly the commands the code registers, and registers exactly the ones declared', () => {
+    const declared = manifest.contributes.commands.map((entry) => entry.command);
+    const registered = [...ALL_COMMAND_IDS];
+    for (const id of registered) expect(declared, `${id} not contributed`).toContain(id);
+    for (const id of declared) expect(registered, `${id} not registered`).toContain(id);
+  });
+
+  /**
+  Same duplication requirement `view/title` already has (fact 5, this file's earlier describe
+  block): a `view/item/context` entry scoped to one view id only shows the fixed action menu items
+  in that view, not the other, which looks like a broken context menu rather than a missing one.
+  Broken deliberately (see this test file's own report) by removing one view's copy — the failure
+  in `PROJECT_CONTEXT_MENU_COMMAND_IDS`'s absence from the filtered list confirmed this catches it.
+  */
+  it('duplicates every fixed project context-menu command onto both view ids', () => {
+    const itemContextMenu = manifest.contributes.menus['view/item/context'] ?? [];
+    for (const id of ALL_VIEW_IDS) {
+      const forThisView = itemContextMenu
+        .filter((entry) => entry.when.includes(`view == ${id}`))
+        .map((entry) => entry.command);
+      for (const commandId of PROJECT_CONTEXT_MENU_COMMAND_IDS) {
+        expect(forThisView, `${id} is missing a menu entry for ${commandId}`).toContain(commandId);
+      }
+    }
+  });
+
+  /**
+  `PROJECT_CONTEXT_MENU_COMMAND_IDS`' entries only — `view/item/context` also carries "Remove Root"
+  (package 04-E), scoped to `rootGroup` instead and checked by its own describe block below, so this
+  can no longer assert the guard against every entry in the array.
+  */
+  it('scopes every project context-menu entry to a project (or, for Hide, a folder) tree item', () => {
+    const itemContextMenu = manifest.contributes.menus['view/item/context'] ?? [];
+    const projectCommands = new Set<string>(PROJECT_CONTEXT_MENU_COMMAND_IDS);
+    for (const entry of itemContextMenu) {
+      if (!projectCommands.has(entry.command)) continue;
+      expect(entry.when, `${entry.command} has no viewItem guard`).toContain('viewItem == project');
     }
   });
 });

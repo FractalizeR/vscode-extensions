@@ -298,6 +298,69 @@ describe('loadRulesFile', () => {
       expect(result.file?.actions).toEqual([]);
     });
 
+    it('rejects an uncompilable appliesTo pattern with a diagnostic, not a throw', () => {
+      // R07-ACTION-CONDITION: appliesTo is a Condition too, but lives on RawActionDefinition, a
+      // shape validateRules (which only walks rules[]) never sees — before this fix an invalid
+      // appliesTo loaded with zero diagnostics and only threw once the registry compiled it.
+      const content = JSON.stringify({
+        version: 1,
+        rules: [],
+        actions: [
+          {
+            id: 'a1',
+            appliesTo: { kind: 'nameMatches', pattern: '(' },
+            spec: { kind: 'openFolder', window: 'current' },
+          },
+        ],
+      });
+      let result: ReturnType<typeof loadRulesFile> | undefined;
+      expect(() => {
+        result = loadRulesFile(content, []);
+      }).not.toThrow();
+      expect(result?.file).toBeUndefined();
+      expect(result?.diagnostics).toContainEqual(
+        expect.objectContaining({ path: '/actions/0/appliesTo/pattern' }),
+      );
+    });
+
+    it('rejects a catastrophic-backtracking appliesTo pattern with a diagnostic', () => {
+      // Without this, an action's appliesTo would bypass the complexity screening that exists
+      // specifically because a synchronous regexp cannot be interrupted in Node (fact 26) —
+      // meaning it would run, unscreened, against every visible node on every refresh.
+      const content = JSON.stringify({
+        version: 1,
+        rules: [],
+        actions: [
+          {
+            id: 'a1',
+            appliesTo: { kind: 'nameMatches', pattern: '(a+)+' },
+            spec: { kind: 'openFolder', window: 'current' },
+          },
+        ],
+      });
+      const result = loadRulesFile(content, []);
+      expect(result.file).toBeUndefined();
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ path: '/actions/0/appliesTo/pattern' }),
+      );
+    });
+
+    it('accepts a well-formed appliesTo condition', () => {
+      const content = JSON.stringify({
+        version: 1,
+        rules: [],
+        actions: [
+          {
+            id: 'a1',
+            appliesTo: { kind: 'nameMatches', pattern: '^src$' },
+            spec: { kind: 'openFolder', window: 'current' },
+          },
+        ],
+      });
+      const result = loadRulesFile(content, []);
+      expect(result.diagnostics).toEqual([]);
+    });
+
     it('round-trips declared actions through toRawRulesFile', () => {
       const actions = [{ id: 'a1', spec: { kind: 'openFolder', window: 'current' } as const }];
       const raw = toRawRulesFile(DEFAULT_RULES, actions);

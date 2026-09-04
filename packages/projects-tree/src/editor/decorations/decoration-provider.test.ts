@@ -191,10 +191,19 @@ describe('HighlightDecorationProvider', () => {
     expect(decoration?.badge).toBe('X');
     expect(decoration?.tooltip).toBe('tip');
     expect(decoration?.color).toBeDefined();
-    // Not propagated: this provider is global, so a highlight climbing to its ancestors would
-    // badge unrelated folders in the Explorer. Deliberate, and recorded in 03-tree-view.md — a
-    // per-rule field is stage 04's subject.
+    // Not propagated unless the rule's HighlightSpec asks for it — see the `propagate: true` tests
+    // below for the paired flag+signal behaviour.
     expect(decoration?.propagate).toBeUndefined();
+  });
+
+  it('sets FileDecoration.propagate when the rule asks for it', () => {
+    const provider = new HighlightDecorationProvider();
+    const node = makeNode('proj', {
+      verdict: withHighlight({ badge: 'X', propagate: true }),
+    });
+    provider.update([node]);
+    const decoration = provider.provideFileDecoration(makeUri(node.facts.absolutePath) as never);
+    expect(decoration?.propagate).toBe(true);
   });
 
   it('an over-limit badge never reaches the decoration returned by provideFileDecoration', () => {
@@ -216,11 +225,12 @@ describe('HighlightDecorationProvider', () => {
   });
 
   /**
-  Only the node whose own decoration changed is signalled. Ancestors are not, because nothing
-  propagates to them — signalling a URI whose decoration cannot have changed is work with no
-  observable effect. This assertion is what makes the pairing explicit: were `propagate` turned
-  back on without restoring the ancestor signal, fact 9 says the ancestor would never re-ask and
-  the propagated badge would silently not appear.
+  Only the node whose own decoration changed is signalled — no ancestor-URI computation exists in
+  this class (fact 62: firing the changed node's own URI already makes VS Code re-evaluate every
+  on-disk ancestor, so an explicit ancestor signal here would be observably identical work). This
+  is now the whole of what the pairing test for fact 9 needs to check on the "which URIs" axis; the
+  other half — that a change touching `propagate` is never dropped from the signal — is the next
+  test.
   */
   it('signals the changed node only, not its ancestors', () => {
     const provider = new HighlightDecorationProvider();
@@ -244,6 +254,34 @@ describe('HighlightDecorationProvider', () => {
     expect(fired).toHaveLength(1);
     const signalled = (fired[0] as { toString: () => string }[]).map((u) => u.toString());
     expect(signalled).toEqual([`file://${decoratedChild.facts.absolutePath}`]);
+  });
+
+  /**
+  The other half of the fact-9 pairing: a node whose decoration starts propagating must still be
+  signalled on its own URI — `provideFileDecoration` is never called by the platform for a resource
+  that never renders, so if this signal were dropped (e.g. a diff that special-cased `propagate` out
+  of the comparison) the flag would go live with nothing telling any ancestor to re-ask, per fact
+  9/62. Same badge on both sides — only `propagate` differs — so a diff that ignored `propagate`
+  would wrongly treat this as unchanged.
+  */
+  it('signals the node itself when only its propagate flag changes', () => {
+    const provider = new HighlightDecorationProvider();
+    const node = makeNode('proj', { verdict: withHighlight({ badge: 'X' }) });
+    provider.update([node]);
+
+    const fired: unknown[] = [];
+    provider.onDidChangeFileDecorations((uris) => {
+      fired.push(uris);
+    });
+
+    const nowPropagating = makeNode('proj', {
+      verdict: withHighlight({ badge: 'X', propagate: true }),
+    });
+    provider.update([nowPropagating]);
+
+    expect(fired).toHaveLength(1);
+    const signalled = (fired[0] as { toString: () => string }[]).map((u) => u.toString());
+    expect(signalled).toEqual([`file://${nowPropagating.facts.absolutePath}`]);
   });
 
   it('does not signal anything when update() is called with an unchanged tree', () => {
