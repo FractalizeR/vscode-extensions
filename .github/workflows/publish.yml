@@ -1,0 +1,89 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify manifest version matches release tag
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          tag_version="${tag#v}"
+          manifest_version="$(node -p "require('./packages/projects-tree/package.json').version")"
+          if [ "$tag_version" != "$manifest_version" ]; then
+            echo "::error::Tag $tag (version $tag_version) does not match packages/projects-tree/package.json version ($manifest_version). Bump the manifest version to match before tagging a release." >&2
+            exit 1
+          fi
+
+      - name: Run checks
+        run: pnpm check
+
+      - name: Package projects-tree
+        run: pnpm --filter projects-tree package
+
+      - name: Resolve .vsix path
+        id: vsix
+        run: |
+          path="$(find packages/projects-tree -maxdepth 1 -name '*.vsix' -print -quit)"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - name: Verify .vsix contents against allowlist
+        run: node tools/check-vsix-contents.ts "${{ steps.vsix.outputs.path }}"
+
+      # secrets.* is not readable in `if:` at job or step level. Each publish step
+      # below mirrors only the one PAT it needs into its own step-level `env:`; a
+      # step's own `env:` block is resolved before that same step's `if:` is
+      # evaluated, so `env.*_PAT != ''` still works as the enable/skip gate. This
+      # keeps VSCE_PAT and OVSX_PAT out of every step that doesn't publish
+      # (install, package, the .vsix content check) instead of exposing both to
+      # the whole job via job-level `env:`.
+      - name: Publish to Visual Studio Marketplace
+        if: env.VSCE_PAT != ''
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: pnpm --filter projects-tree exec vsce publish --packagePath "${{ steps.vsix.outputs.path }}"
+
+      - name: Publish to Open VSX Registry
+        if: env.OVSX_PAT != ''
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        # ovsx is invoked at a pinned exact version rather than as a floating
+        # `pnpm dlx ovsx` (which would resolve to whatever is latest on the npm
+        # registry at publish time) so a compromised/typosquatted release of the
+        # tool cannot silently run with publish-capable tokens. It cannot live in
+        # package.json as a devDependency here (owned by another work package).
+        run: pnpm dlx ovsx@1.1.1 publish "${{ steps.vsix.outputs.path }}" --pat "$OVSX_PAT"
+
+      - name: Report skipped publishers
+        if: env.VSCE_PAT == '' || env.OVSX_PAT == ''
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          [ -n "$VSCE_PAT" ] || echo "::notice::VSCE_PAT is not set, skipped Marketplace publish."
+          [ -n "$OVSX_PAT" ] || echo "::notice::OVSX_PAT is not set, skipped Open VSX publish."

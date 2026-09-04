@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  # Only the default branch: a feature branch push is already covered by the
+  # pull_request trigger below, so including it here would run the full check
+  # twice per commit (push + pull_request) for the duration the PR is open.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run checks
+        run: pnpm check
+
+      - name: Package projects-tree
+        id: package
+        run: pnpm --filter projects-tree package
+
+      # Same check `publish.yml` runs before a release. It lived only there, which meant an
+      # allowlist that had gone stale surfaced at release time — and it had: the Russian
+      # localization bundles were payload nobody had listed, and two test-only files were shipping.
+      # Running it on every pull request costs nothing here, because this job already built the
+      # archive one step above.
+      - name: Check .vsix payload against the allowlist
+        run: node tools/check-vsix-contents.ts packages/projects-tree/projects-tree-0.0.0.vsix
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: projects-tree-vsix
+          path: packages/projects-tree/*.vsix
+          if-no-files-found: error
+
+  # Separate job, not extra steps in `check`: these tests boot a real copy of the editor
+  # (api-facts.md, fact 54) and stay out of `pnpm check` for that reason (AGENTS.md, "Validation").
+  # Runs in parallel with `check` rather than depending on it: integration tests exercise the
+  # source tree directly, not the packaged .vsix, so there is nothing in `check` (nor its packaging
+  # step) they need to wait on — running them concurrently gets a red result back sooner. The
+  # tradeoff: on a commit that `check` would fail anyway, this job's CI minutes (dominated by the
+  # editor download, cached below) are spent regardless.
+  integration-test:
+    name: integration-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The editor download (api-facts.md, fact 54: `@vscode/test-electron` fetches a real VS Code
+      # build) is a ~300MB fetch, so it is cached. Keyed on the contents of `.vscode-test.mjs`,
+      # which is where the version the suite runs against is decided — NOT on the OS alone. A fixed
+      # key would never pick up a different editor: `actions/cache` skips its save step on a cache
+      # hit, so the first run's directory would be restored forever and any later version
+      # re-downloaded on every run — the opposite of caching. An earlier version of this comment
+      # claimed a version bump would "add a new directory under the same key"; that is not how the
+      # action behaves (round 06 review, claude-13). `restore-keys` still gives a partial hit after
+      # a config change, so the bump costs one download rather than one per run.
+      - name: Cache downloaded editor
+        uses: actions/cache@v4
+        with:
+          path: packages/projects-tree/.vscode-test
+          key: ${{ runner.os }}-vscode-test-${{ hashFiles('packages/projects-tree/.vscode-test.mjs') }}
+          restore-keys: |
+            ${{ runner.os }}-vscode-test-
+
+      # api-facts.md, fact 55, quoted in full because the next reader who sees a green macOS/
+      # Windows runner reads this as bureaucracy and "simplifies" it away: microsoft/vscode-test's
+      # own sample CI runs `xvfb-run -a npm test` guarded by `if: runner.os == 'Linux'`, and the
+      # unguarded command on any other OS — the real editor build `@vscode/test-electron` launches
+      # (fact 54) needs a display server to open a window at all, which Linux CI runners do not
+      # have and macOS/Windows runners do not need this wrapper for.
+      - name: Run integration tests (xvfb-run -a on Linux — fact 55)
+        run: xvfb-run -a pnpm --filter projects-tree run test:integration

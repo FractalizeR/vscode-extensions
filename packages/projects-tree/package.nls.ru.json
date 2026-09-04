@@ -1,0 +1,18 @@
+{
+  "viewsContainer.projectsTree.title": "Проекты",
+  "view.projectsTree.name": "Проекты",
+  "viewsWelcome.noRoots": "Корневые папки не настроены.\n[Добавить корневую папку…](command:projectsTree.addRoot)\n[Открыть настройки](command:workbench.action.openSettings?%22%40ext%3Afractalizer.projects-tree%22)",
+  "command.refresh.title": "Обновить",
+  "configuration.title": "Дерево проектов",
+  "configuration.roots.description": "Корневые папки для поиска проектов. Каждый элемент — либо абсолютный путь, либо объект { \"path\": \"...\", \"label\": \"...\" }, задающий корню собственную подпись при отображении в виде группы.",
+  "configuration.showRootNodes.description": "Показывать ли для каждого настроенного корня собственный узел-группу верхнего уровня.",
+  "configuration.showRootNodes.enum.auto": "Группировать, только если настроено больше одного корня; содержимое единственного корня показывается напрямую.",
+  "configuration.showRootNodes.enum.always": "Всегда показывать узел-группу для каждого корня, даже если корень один.",
+  "configuration.showRootNodes.enum.never": "Никогда не группировать: содержимое всех корней показывается вместе на верхнем уровне.",
+  "command.addRoot.title": "Добавить корневую папку…",
+  "configuration.location.description": "Где показывается дерево проектов.",
+  "configuration.location.enum.activityBar": "Собственный контейнер на панели действий (Activity Bar).",
+  "configuration.location.enum.explorer": "Представление внутри Проводника (Explorer), рядом с деревом файлов.",
+  "configuration.location.enum.none": "Нигде — дерева нет; вместо него используйте команду выбора проекта.",
+  "color.highlight.description": "Цвет узла, выделенного правилом."
+}

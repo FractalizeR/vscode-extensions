@@ -1,0 +1,18 @@
+{
+  "viewsContainer.projectsTree.title": "Projects",
+  "view.projectsTree.name": "Projects",
+  "viewsWelcome.noRoots": "No root folders are configured.\n[Add Root Folder…](command:projectsTree.addRoot)\n[Open Settings](command:workbench.action.openSettings?%22%40ext%3Afractalizer.projects-tree%22)",
+  "command.refresh.title": "Refresh",
+  "configuration.title": "Projects Tree",
+  "configuration.roots.description": "Root folders to scan for projects. Each entry is either an absolute path, or an object { \"path\": \"...\", \"label\": \"...\" } to give the root a custom label when it is shown as a group.",
+  "configuration.showRootNodes.description": "Whether each configured root gets its own top-level group node in the tree.",
+  "configuration.showRootNodes.enum.auto": "Group only when more than one root is configured; a single root's content is shown directly.",
+  "configuration.showRootNodes.enum.always": "Always show a group node per root, even with a single root.",
+  "configuration.showRootNodes.enum.never": "Never group; every root's content is shown together at the top level.",
+  "command.addRoot.title": "Add Root Folder…",
+  "configuration.location.description": "Where the projects tree is shown.",
+  "configuration.location.enum.activityBar": "Its own container in the Activity Bar.",
+  "configuration.location.enum.explorer": "A view inside the Explorer, next to the file tree.",
+  "configuration.location.enum.none": "Nowhere — no tree; use the command to pick a project instead.",
+  "color.highlight.description": "Color of a node a rule marked as highlighted."
+}

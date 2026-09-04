@@ -1,0 +1,9 @@
+packages:
+  - "packages/*"
+  - "packages/*/webview"
+allowBuilds:
+  "@vscode/vsce-sign": true
+  esbuild: true
+  keytar: true
+  lefthook: true
+  unrs-resolver: true

@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify manifest version matches release tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          tag_version="${tag#v}"
+          manifest_version="$(node -p "require('./packages/projects-tree/package.json').version")"
+          if [ "$tag_version" != "$manifest_version" ]; then
+            echo "::error::Tag $tag (version $tag_version) does not match packages/projects-tree/package.json version ($manifest_version). Bump the manifest version to match before tagging a release." >&2
+            exit 1
+          fi
+
+      - name: Run checks
+        run: pnpm check
+
+      - name: Package projects-tree
+        run: pnpm --filter projects-tree package
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          notes_file="$(mktemp)"
+          # Prefix match via index(), not a regex match: the version string is
+          # attacker/author-controlled input (tag name) and must never be
+          # interpolated into an awk/regex pattern unescaped.
+          awk -v header="## [$version]" '
+            /^## \[/ {
+              if (found) exit
+              if (index($0, header) == 1) { found = 1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > "$notes_file"
+          if [ ! -s "$notes_file" ]; then
+            echo "No matching section for version $version in CHANGELOG.md; falling back to a generic note." >&2
+            printf 'Release %s. See CHANGELOG.md for details.\n' "$tag" > "$notes_file"
+          fi
+          {
+            echo "path=$notes_file"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.notes.outputs.path }}
+          files: packages/projects-tree/*.vsix
+          fail_on_unmatched_files: true

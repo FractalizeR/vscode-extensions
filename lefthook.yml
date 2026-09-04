@@ -1,0 +1,20 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      glob: '*.{ts,tsx,js,mjs,cjs,json,yml,yaml,md}'
+      # CLAUDE.md is a symlink to AGENTS.md; prettier exits 2 on a symlink passed
+      # explicitly, and {staged_files} passes every staged path by name. The target
+      # is formatted on its own, so excluding the link loses no coverage.
+      exclude:
+        - CLAUDE.md
+      run: pnpm exec prettier --check {staged_files}
+
+    - name: lint
+      glob: '*.{ts,tsx}'
+      run: pnpm exec eslint {staged_files}
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: pnpm exec commitlint --edit {1}

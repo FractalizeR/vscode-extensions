@@ -1,0 +1,7 @@
+{
+  "Ignoring {0} invalid entry/entries in projectsTree.roots — each must be an absolute path, or an object with an absolute \"path\".": "Некорректные записи в projectsTree.roots ({0}) игнорируются: каждая должна быть абсолютным путём либо объектом с абсолютным «path».",
+  "Add as Project Root": "Добавить как корень проекта",
+  "Open Project": "Открыть проект",
+  "Ignoring {0} duplicate entry/entries in projectsTree.roots — each root must be configured only once.": "Повторяющиеся записи в projectsTree.roots ({0}) игнорируются: каждый корень указывается один раз.",
+  "Ignoring the projects-tree.rules.json file — it has {0} problem(s); using default rules instead.": "Файл projects-tree.rules.json игнорируется: в нём найдено проблем — {0}; используются правила по умолчанию."
+}

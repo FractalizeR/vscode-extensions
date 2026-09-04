@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+*.vsix
+.vscode-test/
+pnpm-lock.yaml
+# Планы — рабочий материал, не поставка; docs/architecture.md и прочая документация-поставка
+# форматируются наравне с остальным репозиторием.
+docs/plans/
+# pnpm-workspace.yaml — владелец 01-A, уже принят; правится только тем пакетом
+# (pnpm approve-builds сам дописывает в него allowBuilds — это ожидаемо).
+pnpm-workspace.yaml

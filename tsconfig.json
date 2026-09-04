@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["*.ts", "*.mts", "tools/**/*.ts", "tools/**/*.mts", "tools/**/*.mjs"],
+  "exclude": ["tools/architecture-fixtures/**"]
+}

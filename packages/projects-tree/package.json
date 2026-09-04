@@ -1,0 +1,218 @@
+{
+  "name": "projects-tree",
+  "version": "0.0.0",
+  "private": true,
+  "publisher": "fractalizer",
+  "displayName": "Projects Tree",
+  "description": "Tree view for jumping between related project checkouts on disk.",
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FractalizeR/vscode-extensions.git",
+    "directory": "packages/projects-tree"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./dist/extension.js",
+  "l10n": "./l10n",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Roots, maxDepth and rule matching work read-only; actions that shell out to disk paths are limited until the workspace is trusted."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The core walks the filesystem through node:fs and cannot operate over vscode-vfs:// virtual filesystems."
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:projectsTree.view",
+    "onView:projectsTree.explorerView"
+  ],
+  "contributes": {
+    "jsonValidation": [
+      {
+        "fileMatch": "projects-tree.rules.json",
+        "url": "./schemas/rules.schema.json"
+      }
+    ],
+    "colors": [
+      {
+        "id": "projectsTree.highlight",
+        "description": "%color.highlight.description%",
+        "defaults": {
+          "dark": "#3794FF",
+          "light": "#005FB8",
+          "highContrast": "#3794FF",
+          "highContrastLight": "#005FB8"
+        }
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "projectsTree",
+          "title": "%viewsContainer.projectsTree.title%",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "projectsTree": [
+        {
+          "id": "projectsTree.view",
+          "name": "%view.projectsTree.name%",
+          "when": "projectsTree.locationIsActivityBar"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "projectsTree.explorerView",
+          "name": "%view.projectsTree.name%",
+          "when": "projectsTree.locationIsExplorer"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "projectsTree.view",
+        "contents": "%viewsWelcome.noRoots%",
+        "when": "!projectsTree.hasRoots"
+      },
+      {
+        "view": "projectsTree.explorerView",
+        "contents": "%viewsWelcome.noRoots%",
+        "when": "!projectsTree.hasRoots"
+      }
+    ],
+    "commands": [
+      {
+        "command": "projectsTree.refresh",
+        "title": "%command.refresh.title%",
+        "category": "%configuration.title%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "projectsTree.addRoot",
+        "title": "%command.addRoot.title%",
+        "category": "%configuration.title%",
+        "icon": "$(add)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectsTree.refresh",
+          "when": "view == projectsTree.view",
+          "group": "navigation"
+        },
+        {
+          "command": "projectsTree.addRoot",
+          "when": "view == projectsTree.view",
+          "group": "navigation"
+        },
+        {
+          "command": "projectsTree.refresh",
+          "when": "view == projectsTree.explorerView",
+          "group": "navigation"
+        },
+        {
+          "command": "projectsTree.addRoot",
+          "when": "view == projectsTree.explorerView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "projectsTree.roots": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "%configuration.roots.description%"
+        },
+        "projectsTree.showRootNodes": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "%configuration.showRootNodes.enum.auto%",
+            "%configuration.showRootNodes.enum.always%",
+            "%configuration.showRootNodes.enum.never%"
+          ],
+          "default": "auto",
+          "scope": "window",
+          "description": "%configuration.showRootNodes.description%"
+        },
+        "projectsTree.location": {
+          "type": "string",
+          "enum": [
+            "activityBar",
+            "explorer",
+            "none"
+          ],
+          "enumDescriptions": [
+            "%configuration.location.enum.activityBar%",
+            "%configuration.location.enum.explorer%",
+            "%configuration.location.enum.none%"
+          ],
+          "default": "activityBar",
+          "scope": "window",
+          "description": "%configuration.location.description%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node esbuild.mjs",
+    "build:prod": "node esbuild.mjs --prod",
+    "copy:license": "node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "package": "pnpm run copy:license && pnpm run build:prod && vsce package --no-dependencies",
+    "test:integration": "node -e \"fs.rmSync('out',{recursive:true,force:true})\" && pnpm run build && tsc -p test/tsconfig.json && vscode-test"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "mocha": "^12.0.0",
+    "typescript": "^5.7.3"
+  }
+}

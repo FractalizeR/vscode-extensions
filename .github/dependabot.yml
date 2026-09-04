@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-dependencies:
+        patterns:
+          - '*'
+    ignore:
+      # Pinned to the extension's declared minimum `engines.vscode` (^1.85.0) on
+      # purpose: a newer @types/vscode would let typecheck pass against APIs
+      # unavailable on that floor.
+      - dependency-name: '@types/vscode'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
