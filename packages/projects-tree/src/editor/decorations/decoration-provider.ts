@@ -6,15 +6,12 @@
  * `tooltip` or `color`, and a decoration with none of those three throws and is dropped by the
  * platform (api-facts.md, fact 7).
  *
- * `propagate` is not a `HighlightSpec` field — the core carries no such field, and this file does
- * not invent one. It is instead a standing adapter decision, made for every decoration this module
- * builds: a highlighted project should make its enclosing domain folder show that something inside
- * it is highlighted (03-tree-view.md, package 03-B: "чтобы папка домена показывала наличие
- * выделенных проектов внутри"). Fact 9 says the platform never walks descendants on its own, so
- * `HighlightDecorationProvider.update` also signals every ancestor of a node whose decoration
- * changed through `onDidChangeFileDecorations` — that signal, not a return value from
- * `provideFileDecoration` for the ancestor, is the whole of what this module owes fact 9; the
- * ancestor's own visual merge is the platform's job once told to re-ask.
+ * No decoration propagates to its ancestors — see `toFileDecoration` for why, and
+ * `03-tree-view.md` for the decision. Consequently this module does not signal ancestor URIs
+ * either: fact 9 requires that signal *for a propagating decoration*, and signalling for a
+ * decoration that does not propagate is work with no observable effect, which no test could catch
+ * the loss of. Both halves — the flag and the ancestor signal — return together when `propagate`
+ * becomes a per-rule field.
  *
  * `buildDecorationSpec`/`isBadgeWithinPlatformLimit` are exported for this directory's own tests,
  * not through `decorations/index.ts` — nothing outside `decorations/` needs the raw spec, only the
@@ -94,24 +91,28 @@ export function buildDecorationSpec(
 // afterwards (see `DecorationSpec`'s doc comment for why).
 function toFileDecoration(spec: DecorationSpec): vscode.FileDecoration {
   const color = spec.colorId === undefined ? undefined : new vscode.ThemeColor(spec.colorId);
-  const decoration = new vscode.FileDecoration(spec.badge, spec.tooltip, color);
-  decoration.propagate = true;
-  return decoration;
+  // `propagate` is deliberately left off. Turning it on makes a highlight climb to a node's
+  // ancestors, and this provider is global (fact 8) — so a badge asked for on one project would
+  // also appear on the folders above it in the Explorer, where nothing about ProjectsTree was
+  // requested and where the user cannot switch it off short of disabling file decorations
+  // altogether. The plan describes ancestor propagation as a design property (03-B: «чтобы папка
+  // домена показывала наличие выделенных проектов внутри»); making it a per-rule field is the way
+  // to have it without imposing it, and that means touching `HighlightSpec`, the rules schema and
+  // its validation — stage 04's subject, not this one. Recorded in 03-tree-view.md.
+  return new vscode.FileDecoration(spec.badge, spec.tooltip, color);
 }
 
 interface CollectedEntry {
   readonly key: string;
   readonly uri: vscode.Uri;
   readonly spec: DecorationSpec | undefined;
-  readonly ancestorUris: readonly vscode.Uri[];
 }
 
 /**
-Walks the tree once, pairing every `ClassifiedNode` with its own decoration spec (if any) and the
-URIs of every `ClassifiedNode` ancestor above it. A `RootGroupNode` contributes no entry of its own
+Walks the tree once, pairing every `ClassifiedNode` with its own decoration spec (if any). A `RootGroupNode` contributes no entry of its own
 — it has no `resourceUri` (docs/plans/projects-tree/00-overview.md, "Корень — контейнер, а не
-узел") — but its children are still walked, with the ancestor chain unchanged, so a project directly
-under a root group still gets the (empty) chain it would have without grouping.
+узел") — but its children are still walked, so grouping by root changes nothing about which URIs
+carry a decoration.
 
 `seenKeys` gives every URI at most one entry (review-06, codex-09/claude-05): the core keys a node
 by `rootId` + path (`NodeKey`, `tree-view/registry.ts`), because two configured roots can overlap on
@@ -129,27 +130,21 @@ cannot be one.
 */
 function collect(
   elements: readonly TreeElement[],
-  ancestorUris: readonly vscode.Uri[],
   out: CollectedEntry[],
   seenKeys: Set<string>,
 ): void {
   for (const element of elements) {
     if (isRootGroupNode(element)) {
-      collect(element.children, ancestorUris, out, seenKeys);
+      collect(element.children, out, seenKeys);
       continue;
     }
     const uri = vscode.Uri.file(element.facts.absolutePath);
     const key = uri.toString();
     if (!seenKeys.has(key)) {
       seenKeys.add(key);
-      out.push({
-        key,
-        uri,
-        spec: buildDecorationSpec(element.verdict.highlight.value),
-        ancestorUris,
-      });
+      out.push({ key, uri, spec: buildDecorationSpec(element.verdict.highlight.value) });
     }
-    collect(element.children, [...ancestorUris, uri], out, seenKeys);
+    collect(element.children, out, seenKeys);
   }
 }
 
@@ -157,8 +152,7 @@ function collect(
  * Global `FileDecorationProvider` (api-facts.md, fact 8: registration carries no view id, so
  * decorations from this provider also render in the Explorer). `update` is the only write path —
  * called with the tree's current top level after every refresh — and diffs against the previous
- * call to find every URI whose decoration changed, signalling that URI *and* every one of its
- * ancestors so a propagating change is not silently missed (fact 9).
+ * call to signal every URI whose decoration changed.
  */
 export class HighlightDecorationProvider
   implements vscode.FileDecorationProvider, vscode.Disposable
@@ -176,7 +170,7 @@ export class HighlightDecorationProvider
 
   update(elements: readonly TreeElement[]): void {
     const entries: CollectedEntry[] = [];
-    collect(elements, [], entries, new Set<string>());
+    collect(elements, entries, new Set<string>());
     const nextState = new Map(entries.map((entry) => [entry.key, entry]));
 
     const toSignal = new Map<string, vscode.Uri>();
@@ -188,8 +182,6 @@ export class HighlightDecorationProvider
       const uri = next?.uri ?? previous?.uri;
       if (uri === undefined) continue;
       toSignal.set(key, uri);
-      const ancestorUris = next?.ancestorUris ?? previous?.ancestorUris ?? [];
-      for (const ancestorUri of ancestorUris) toSignal.set(ancestorUri.toString(), ancestorUri);
     }
 
     this.#state = nextState;

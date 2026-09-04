@@ -100,10 +100,34 @@ describe('readRoots', () => {
     expect(duplicates).toEqual(['/abs/one']);
   });
 
-  it('does not treat differently-spelled paths to the same directory as duplicates', () => {
-    // Named limitation (see RootsReadResult's doc comment): only exact string equality on id is
-    // checked, so a trailing separator still produces two accepted, undetected duplicates.
-    state.values.roots = ['/abs/one', '/abs/one/'];
+  /**
+  A path copied out of a terminal often carries the separator, and the id is what every piece of
+  per-node state is keyed on — so the two spellings must be one root, not two groups showing the
+  same subtree.
+  */
+  it('treats a trailing separator as the same root', () => {
+    state.values.roots = ['/abs/one', '/abs/one/', '/abs/one///'];
+
+    const { roots, duplicates } = readRoots();
+
+    expect(roots).toEqual([{ id: '/abs/one', path: '/abs/one' }]);
+    expect(duplicates).toEqual(['/abs/one', '/abs/one']);
+  });
+
+  it('keeps the filesystem root itself, which is nothing but a separator', () => {
+    state.values.roots = ['/'];
+
+    expect(readRoots().roots).toEqual([{ id: '/', path: '/' }]);
+  });
+
+  /**
+  The limitation that remains, asserted so it is a decision rather than an oversight: only string
+  equality is checked, so a symlink or a case difference on a case-insensitive filesystem still
+  yields two roots. Resolving either needs a filesystem call from a synchronous settings read and
+  would rewrite every existing root's id — see `normalizeRootPath`.
+  */
+  it('does not resolve a symlink or a case difference to one root', () => {
+    state.values.roots = ['/abs/one', '/abs/One'];
 
     const { roots, duplicates } = readRoots();
 

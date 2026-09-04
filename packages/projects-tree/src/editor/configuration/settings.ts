@@ -71,13 +71,15 @@ function parseRootEntry(value: unknown): ConfiguredRoot | undefined {
   if (typeof value === 'string') {
     // The path doubles as the root's id: it is stable across sessions and, unlike an index,
     // survives a reorder of the setting without changing every node's NodeKey.
-    return isValidRootPath(value) ? { id: value, path: value } : undefined;
+    const normalized = normalizeRootPath(value);
+    return normalized === undefined ? undefined : { id: normalized, path: normalized };
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
 
   const record = value as Record<string, unknown>;
-  const rootPath = record.path;
-  if (typeof rootPath !== 'string' || !isValidRootPath(rootPath)) return undefined;
+  if (typeof record.path !== 'string') return undefined;
+  const rootPath = normalizeRootPath(record.path);
+  if (rootPath === undefined) return undefined;
 
   const label = record.label;
   if (label !== undefined && (typeof label !== 'string' || label.length === 0)) return undefined;
@@ -87,8 +89,30 @@ function parseRootEntry(value: unknown): ConfiguredRoot | undefined {
     : { id: rootPath, path: rootPath, label };
 }
 
-function isValidRootPath(value: string): boolean {
-  return value.length > 0 && nodePath.isAbsolute(value);
+/**
+An absolute path with any trailing separator removed, or `undefined` when the value is not usable as
+a root at all.
+
+Trimming the separator here rather than when deduplicating is the point: the result becomes the
+root's `id`, which is what `NodeKey` and every piece of stored per-node state are keyed on, so
+`/a/b` and `/a/b/` must not be two different roots. Copying a path out of a terminal is how the
+trailing form gets into the setting, and without this the user sees the same subtree twice under two
+groups (review-06, claude-01).
+
+Deliberately string-only. Two different strings can still name one directory through a symlink, or
+through a case difference on a case-insensitive filesystem, and neither is caught here: resolving
+those needs a filesystem call from what is a synchronous, side-effect-free settings read, and it
+would rewrite the `id` of every existing root — discarding the stored expansion state of users who
+have no duplicates at all. Named limitation; `identity()` in `discovery/file-system.ts` is where a
+real answer would come from once stage 07 already touches this state.
+
+A root path of exactly the filesystem root (`/`, or `C:\`) keeps its separator: it *is* the
+separator, and stripping it would leave an empty or relative string.
+*/
+function normalizeRootPath(value: string): string | undefined {
+  if (value.length === 0 || !nodePath.isAbsolute(value)) return undefined;
+  const trimmed = value.replace(/[\\/]+$/, '');
+  return trimmed.length > 0 && nodePath.isAbsolute(trimmed) ? trimmed : value;
 }
 
 export type ShowRootNodes = 'auto' | 'always' | 'never';

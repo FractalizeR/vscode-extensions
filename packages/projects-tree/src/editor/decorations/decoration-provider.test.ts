@@ -181,7 +181,7 @@ describe('HighlightDecorationProvider', () => {
     ).toBeUndefined();
   });
 
-  it('provideFileDecoration returns a decoration carrying badge/tooltip/propagate for a decorated node', () => {
+  it('provideFileDecoration returns a decoration carrying badge, tooltip and colour', () => {
     const provider = new HighlightDecorationProvider();
     const node = makeNode('proj', {
       verdict: withHighlight({ badge: 'X', color: 'c', description: 'tip' }),
@@ -190,8 +190,11 @@ describe('HighlightDecorationProvider', () => {
     const decoration = provider.provideFileDecoration(makeUri(node.facts.absolutePath) as never);
     expect(decoration?.badge).toBe('X');
     expect(decoration?.tooltip).toBe('tip');
-    expect(decoration?.propagate).toBe(true);
     expect(decoration?.color).toBeDefined();
+    // Not propagated: this provider is global, so a highlight climbing to its ancestors would
+    // badge unrelated folders in the Explorer. Deliberate, and recorded in 03-tree-view.md — a
+    // per-rule field is stage 04's subject.
+    expect(decoration?.propagate).toBeUndefined();
   });
 
   it('an over-limit badge never reaches the decoration returned by provideFileDecoration', () => {
@@ -212,11 +215,17 @@ describe('HighlightDecorationProvider', () => {
     ).toBeUndefined();
   });
 
-  it('signals every ancestor URI when a propagating descendant gains a decoration', () => {
+  /**
+  Only the node whose own decoration changed is signalled. Ancestors are not, because nothing
+  propagates to them — signalling a URI whose decoration cannot have changed is work with no
+  observable effect. This assertion is what makes the pairing explicit: were `propagate` turned
+  back on without restoring the ancestor signal, fact 9 says the ancestor would never re-ask and
+  the propagated badge would silently not appear.
+  */
+  it('signals the changed node only, not its ancestors', () => {
     const provider = new HighlightDecorationProvider();
     const child = makeNode('child', {}, '/roots/r1/parent');
     const parent = makeNode('parent', { children: [child] });
-    // First update: nothing decorated yet.
     provider.update([parent]);
 
     const fired: unknown[] = [];
@@ -234,8 +243,7 @@ describe('HighlightDecorationProvider', () => {
 
     expect(fired).toHaveLength(1);
     const signalled = (fired[0] as { toString: () => string }[]).map((u) => u.toString());
-    expect(signalled).toContain(`file://${decoratedChild.facts.absolutePath}`);
-    expect(signalled).toContain(`file://${sameParent.facts.absolutePath}`);
+    expect(signalled).toEqual([`file://${decoratedChild.facts.absolutePath}`]);
   });
 
   it('does not signal anything when update() is called with an unchanged tree', () => {

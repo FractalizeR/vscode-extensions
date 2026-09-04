@@ -33,7 +33,9 @@ stays on the machine that wrote it, and has to be copied by hand.
 
 **Highlighting is best-effort by design.** A highlighted node is shown
 through three carriers — an emphasized label, a color and a badge — and
-none of them is unconditional. The color and the badge are file
+none of them is unconditional. A highlight stays on the node it was asked
+for: it does not climb to the folders above it, which would put a badge on
+unrelated folders in the Explorer. The color and the badge are file
 decorations, which VS Code renders globally: they also appear in the
 Explorer, the badge shares its slot with git's, and a user who turns
 `explorer.decorations.colors` or `explorer.decorations.badges` off turns
