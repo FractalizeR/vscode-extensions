@@ -6,12 +6,26 @@
  * `tooltip` or `color`, and a decoration with none of those three throws and is dropped by the
  * platform (api-facts.md, fact 7).
  *
- * No decoration propagates to its ancestors — see `toFileDecoration` for why, and
- * `03-tree-view.md` for the decision. Consequently this module does not signal ancestor URIs
- * either: fact 9 requires that signal *for a propagating decoration*, and signalling for a
- * decoration that does not propagate is work with no observable effect, which no test could catch
- * the loss of. Both halves — the flag and the ancestor signal — return together when `propagate`
- * becomes a per-rule field.
+ * A decoration propagates to its ancestors only when its rule sets `HighlightSpec.propagate`
+ * (`03-tree-view.md`, "Решения, изменённые при реализации"). What fact 9 asks this module to
+ * signal turns out to already exist: firing `onDidChangeFileDecorations` for the *changed node's
+ * own* URI is sufficient for VS Code to pick a propagating decoration up on an ancestor.
+ * `getDecoration`'s `includeChildren` scan folds in any cached descendant whose data has `bubble`
+ * (the extension's `propagate`, api-facts.md fact 62) set, and `affectsResource` — backed by
+ * `TernarySearchTree.hasElementOrSubtree` — is true for *every* on-disk ancestor of a fired URI,
+ * not only the fired one. So `update` below needs no ancestor-URI computation of its own: the
+ * per-node signal it already sends (unconditionally, propagate or not) is the one fact 9 requires.
+ * An earlier revision of this module computed and fired an explicit ancestor chain anyway; removed
+ * because it changed no observable behavior (fact 62) while making the decorations service query
+ * every ancestor and get back `undefined` for a bubble it already knew about — the class of
+ * no-effect work round 06 flagged the first time this file carried an ancestor signal.
+ *
+ * This also means the "climbs only within the configured root" boundary a rule author might expect
+ * from `propagate` is not something this module can promise or enforce: VS Code's own bubble climbs
+ * the literal filesystem hierarchy, with no concept of "our root" at all. If a configured root sits
+ * inside a larger open workspace, `propagate: true` will surface in built-in Explorer folders above
+ * that root that ProjectsTree never claimed to manage — the price of opting a rule into propagation
+ * at all (fact 8), not a defect in this file.
  *
  * `buildDecorationSpec`/`isBadgeWithinPlatformLimit` are exported for this directory's own tests,
  * not through `decorations/index.ts` — nothing outside `decorations/` needs the raw spec, only the
@@ -52,6 +66,7 @@ export interface DecorationSpec {
   readonly badge?: string | undefined;
   readonly tooltip?: string | undefined;
   readonly colorId?: string | undefined;
+  readonly propagate?: boolean | undefined;
 }
 
 /**
@@ -84,22 +99,24 @@ export function buildDecorationSpec(
       ? highlight.badge
       : undefined;
   if (badge === undefined && highlight.color === undefined) return undefined;
-  return { badge, tooltip: highlight.description, colorId: highlight.color };
+  return {
+    badge,
+    tooltip: highlight.description,
+    colorId: highlight.color,
+    propagate: highlight.propagate === true ? true : undefined,
+  };
 }
 
 // The one place a `DecorationSpec` becomes a real `vscode.FileDecoration` — never introspected
 // afterwards (see `DecorationSpec`'s doc comment for why).
 function toFileDecoration(spec: DecorationSpec): vscode.FileDecoration {
   const color = spec.colorId === undefined ? undefined : new vscode.ThemeColor(spec.colorId);
-  // `propagate` is deliberately left off. Turning it on makes a highlight climb to a node's
-  // ancestors, and this provider is global (fact 8) — so a badge asked for on one project would
-  // also appear on the folders above it in the Explorer, where nothing about ProjectsTree was
-  // requested and where the user cannot switch it off short of disabling file decorations
-  // altogether. The plan describes ancestor propagation as a design property (03-B: «чтобы папка
-  // домена показывала наличие выделенных проектов внутри»); making it a per-rule field is the way
-  // to have it without imposing it, and that means touching `HighlightSpec`, the rules schema and
-  // its validation — stage 04's subject, not this one. Recorded in 03-tree-view.md.
-  return new vscode.FileDecoration(spec.badge, spec.tooltip, color);
+  const decoration = new vscode.FileDecoration(spec.badge, spec.tooltip, color);
+  // Left `undefined` (not `false`) when the rule did not ask for it, matching how every other
+  // field here is only ever set when present — `FileDecoration.propagate` itself already defaults
+  // to falsy when absent.
+  if (spec.propagate === true) decoration.propagate = true;
+  return decoration;
 }
 
 interface CollectedEntry {
@@ -152,7 +169,9 @@ function collect(
  * Global `FileDecorationProvider` (api-facts.md, fact 8: registration carries no view id, so
  * decorations from this provider also render in the Explorer). `update` is the only write path —
  * called with the tree's current top level after every refresh — and diffs against the previous
- * call to signal every URI whose decoration changed.
+ * call to signal every URI whose decoration changed. That per-node signal, sent regardless of
+ * `propagate`, is also everything a propagating decoration needs to reach an ancestor (this file's
+ * module doc comment, fact 62) — no separate ancestor-URI signal exists in this class.
  */
 export class HighlightDecorationProvider
   implements vscode.FileDecorationProvider, vscode.Disposable
@@ -181,6 +200,10 @@ export class HighlightDecorationProvider
       if (JSON.stringify(previous?.spec) === JSON.stringify(next?.spec)) continue;
       const uri = next?.uri ?? previous?.uri;
       if (uri === undefined) continue;
+      // Sent for every changed node, `propagate` or not — this is also the paired half of the
+      // flag `toFileDecoration` sets: firing the changed node's own URI is what fact 9 requires,
+      // and it is already sufficient for VS Code to re-evaluate any ancestor (this file's module
+      // doc comment, fact 62). A separate ancestor-URI signal is not computed here on purpose.
       toSignal.set(key, uri);
     }
 

@@ -4,7 +4,7 @@ import rulesSchema from '../../../schemas/rules.schema.json';
 import type { Condition } from './condition';
 import type { HighlightSpec } from './highlight';
 import type { Rule } from './rule';
-import { validateRules, type Diagnostic } from './validation';
+import { validateCondition, validateRules, type Diagnostic } from './validation';
 import type { PartialVerdict } from './verdict';
 
 export type { Diagnostic } from './validation';
@@ -162,18 +162,28 @@ export function loadRulesFile(
  * Duplicate action ids are this module's own check, not `validation.ts`'s: `validateRules` operates
  * on the internal `Rule[]`/`primaryAction`-reference shape, while `actions` is raw on-disk data this
  * module never converts to an internal type (see `RawActionSpec`'s doc comment).
+ *
+ * `appliesTo` is validated here too, with `validation.ts`'s own `validateCondition` (R07-ACTION-
+ * CONDITION): it is a `Condition`, the same shape and same user-supplied-regex risk as a rule's
+ * `when`, but it lives on `RawActionDefinition` — a shape `validateRules` never sees, since that
+ * function only walks `rules[]`. Without this, an uncompilable or catastrophic-backtracking
+ * `appliesTo` pattern would sail through `loadRulesFile` and only fail once
+ * `editor/commands/actions/registry.ts` compiles it — a `SyntaxError` on activation instead of a
+ * diagnostic, or a synchronous regexp run on every node with no screening at all.
  */
 function validateActionIds(actions: readonly RawActionDefinition[]): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const seenIds = new Set<string>();
   for (const [index, action] of actions.entries()) {
+    const base = `/actions/${String(index)}`;
     if (seenIds.has(action.id)) {
-      diagnostics.push({
-        path: `/actions/${String(index)}/id`,
-        message: `duplicate action id "${action.id}"`,
-      });
+      diagnostics.push({ path: `${base}/id`, message: `duplicate action id "${action.id}"` });
     }
     seenIds.add(action.id);
+
+    if (action.appliesTo !== undefined) {
+      diagnostics.push(...validateCondition(action.appliesTo, `${base}/appliesTo`));
+    }
   }
   return diagnostics;
 }

@@ -63,7 +63,14 @@ export function validateRules(
   return diagnostics;
 }
 
-function validateCondition(condition: Condition, path: string): Diagnostic[] {
+/**
+ * Exported so `rules-file.ts` can run the same compile-then-screen check against
+ * `RawActionDefinition.appliesTo` (`then.primaryAction` and rule `when` are not the only place a
+ * user-supplied `nameMatches` pattern appears in a rules file — R07-ACTION-CONDITION). `rules-file.ts`
+ * is the same module directory's sibling file, not a cross-subject import, so this does not cross the
+ * `classification`/`actions` boundary `validateRules`'s doc comment describes.
+ */
+export function validateCondition(condition: Condition, path: string): Diagnostic[] {
   switch (condition.kind) {
     case 'nameMatches': {
       // Compile first: an uncompilable pattern/flags pair (e.g. `pattern: "("`, `flags: "q"`) must
@@ -146,6 +153,17 @@ function validateHighlight(highlight: HighlightSpec, path: string): Diagnostic[]
     diagnostics.push({
       path,
       message: 'must set at least one field — an empty decoration is rejected by VS Code',
+    });
+  }
+  // `propagate` climbs a decoration to a node's ancestors (fact 9/62); an ancestor can only show
+  // what the decoration itself renders visibly, which on a tree row is `color` and `badge` — not
+  // `description`, which is a tooltip that only appears on hovering the node it belongs to, and
+  // not `icon`/`labelHighlight`, which this adapter never turns into `FileDecoration` fields at all
+  // (see `buildDecorationSpec`). `propagate: true` with neither set has nothing to raise.
+  if (!hasVisibleBadge && highlight.color === undefined && highlight.propagate === true) {
+    diagnostics.push({
+      path: `${path}/propagate`,
+      message: 'has nothing to propagate — set color or badge, or drop propagate',
     });
   }
   return diagnostics;
