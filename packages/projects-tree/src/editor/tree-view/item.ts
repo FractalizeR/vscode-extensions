@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import type { HighlightSpec } from '../../projects/classification/index.js';
 import type { ClassifiedNode } from '../../projects/discovery/index.js';
-import { OPEN_PROJECT_COMMAND } from '../commands/index.js';
+import { RUN_PRIMARY_ACTION_COMMAND } from '../commands/index.js';
 import { toTreeItemLabel } from '../decorations/index.js';
 import type { ExpansionState } from './expansion.js';
 import { treeElementKey } from './registry.js';
@@ -57,7 +57,7 @@ function toProjectTreeItem(node: ClassifiedNode, expansionOf: ExpansionLookup): 
   if (node.verdict.project.value) {
     item.iconPath = new vscode.ThemeIcon('rocket');
     item.command = {
-      command: OPEN_PROJECT_COMMAND,
+      command: RUN_PRIMARY_ACTION_COMMAND,
       title: vscode.l10n.t('Open Project'),
       arguments: [node],
     };

@@ -1,18 +1,18 @@
 import * as vscode from 'vscode';
 
-const REFRESH_COMMAND = 'projectsTree.refresh';
+export const REFRESH_COMMAND = 'projectsTree.refresh';
 
 /**
-Structural, not `ProjectsTreeProvider` itself: importing the concrete type from `../tree-view/`
-would make `commands/` and `tree-view/` depend on each other (`tree-view/item.ts` already depends
-on `commands/` for `OPEN_PROJECT_COMMAND`), which `no-circular` (`.dependency-cruiser.mjs`) rejects.
+`reload` must be the same full reload pipeline `extension.ts` runs on a settings change and on a
+rules-file write from "Hide"/"Manage Hidden…" — re-reading `projects-tree.rules.json`, rebuilding
+the action registry, invalidating `NodeRegistry`/`RootGroupRegistry`/`ProjectListCache`, then
+refreshing the tree provider (`extension.ts`'s `refreshFromSettings`). Taking only
+`ProjectsTreeProvider.refresh()` here previously left every one of those a manual file edit relies
+on unreached (R07-REFRESH): the button re-rendered the same stale tree from the same stale rules
+and stale cached project list.
 */
-interface Refreshable {
-  refresh(): Promise<void>;
-}
-
-export function registerRefreshCommand(target: Refreshable): vscode.Disposable {
+export function registerRefreshCommand(reload: () => Promise<void>): vscode.Disposable {
   return vscode.commands.registerCommand(REFRESH_COMMAND, async () => {
-    await target.refresh();
+    await reload();
   });
 }

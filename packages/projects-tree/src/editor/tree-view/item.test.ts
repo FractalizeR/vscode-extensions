@@ -64,7 +64,7 @@ vi.mock('vscode', () => {
 
 const { toTreeItem } = await import('./item.js');
 const { treeElementKey } = await import('./registry.js');
-const { OPEN_PROJECT_COMMAND } = await import('../commands/index.js');
+const { RUN_PRIMARY_ACTION_COMMAND } = await import('../commands/index.js');
 const { isRootGroupNode } = await import('./root-group.js');
 
 // The explicit `ExpansionState | undefined` return annotation, not inference, is what keeps
@@ -102,7 +102,7 @@ describe('toTreeItem', () => {
     });
     const project = toTreeItem(projectNode, noOpinion);
     expect(project.contextValue).toBe('project');
-    expect(project.command?.command).toBe(OPEN_PROJECT_COMMAND);
+    expect(project.command?.command).toBe(RUN_PRIMARY_ACTION_COMMAND);
     expect(project.command?.arguments).toEqual([projectNode]);
     expect(project.iconPath).toBeDefined();
   });
