@@ -93,7 +93,7 @@ jobs:
       # action behaves (round 06 review, claude-13). `restore-keys` still gives a partial hit after
       # a config change, so the bump costs one download rather than one per run.
       - name: Cache downloaded editor
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: packages/projects-tree/.vscode-test
           key: ${{ runner.os }}-vscode-test-${{ hashFiles('packages/projects-tree/.vscode-test.mjs') }}
