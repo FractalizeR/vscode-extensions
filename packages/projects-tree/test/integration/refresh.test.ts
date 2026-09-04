@@ -13,7 +13,7 @@
  * offering after `projectsTree.refresh` is exactly the effect the missing reload broke.
  */
 import * as assert from 'node:assert/strict';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import nodePath from 'node:path';
 import * as vscode from 'vscode';
 import { RULES_FILE_NAME } from '../../src/editor/rules/canonical-rules.js';
@@ -121,6 +121,12 @@ suite('"Refresh" re-reads the rules file, not only the tree', () => {
       ],
       actions: [],
     };
+    // Unlike the real writer (`store.ts`'s `writeRulesFile`), a hand edit cannot assume the
+    // directory exists: on a clean profile nothing has created `globalStorage/<extension-id>/` yet
+    // (`setup`'s own `projectsTree.refresh` only reads the rules file, never writes it), so this
+    // test — standing in for a human editor — creates the directory itself, mirroring
+    // `mkdir(dir, { recursive: true })` in `store.ts`.
+    await mkdir(nodePath.dirname(rulesFile), { recursive: true });
     await writeFile(rulesFile, JSON.stringify(handEdited, null, 2), 'utf8');
 
     await vscode.commands.executeCommand('projectsTree.refresh');
