@@ -31,7 +31,9 @@ VS Code, указывают путь и номер строки на `main` — 
 цитата остаётся верной (находка claude-14, round 06). Поэтому: **номер строки — вспомогательный
 ориентир, воспроизводимость обеспечивает приведённая рядом команда `curl` + `grep` по содержимому,
 а не по номеру.** Снимок `main`, против которого сверялись строки 39-61: `8cc6591ff9f0ed058cc3964ef5b45c31c422a2bb`
-(2026-09-04). Проверка строки, чей номер уехал, начинается с `grep` по цитируемому тексту.
+(2026-09-04). Строка 62 сверена отдельно, тем же днём, против `main` на коммите
+`2e12155dfa05dfe3cd24e6624cb1489ac8a62907`. Проверка строки, чей номер уехал, начинается с `grep`
+по цитируемому тексту.
 
 **Две базы сверки, и их нельзя смешивать:**
 
@@ -1038,6 +1040,475 @@ view, а не остаётся пустой рамкой. Явно провер�
 нет, поэтому это вывод, а не цитата (находка claude-06: решение опиралось на это утверждение, не
 имея под ним строки).
 
+## Пакет 04: подсветка через декорации (bubble/propagate)
+
+**62. Native `propagate`/`bubble` climbs by literal URI containment, unbounded by workspace or
+"root" — and firing the descendant's own URI is what makes an already-rendered ancestor re-ask.**
+Тип: цитата.
+
+Источник: `raw.githubusercontent.com/microsoft/vscode` (ветка `main`),
+`src/vs/workbench/services/decorations/browser/decorationsService.ts` и
+`src/vs/base/common/ternarySearchTree.ts`, снято командами:
+```
+curl -s https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/services/decorations/browser/decorationsService.ts -o decorationsService.ts
+curl -s https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/base/common/ternarySearchTree.ts -o ternarySearchTree.ts
+curl -s https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/api/browser/mainThreadDecorations.ts -o mainThreadDecorations.ts
+grep -n "getDecoration(uri: URI, includeChildren\|if (includeChildren)\|findSuperstr\|data.bubble" decorationsService.ts
+grep -n "affectsResource(uri: URI)\|hasElementOrSubtree(uri)" decorationsService.ts
+grep -n "_onDidChangeDecorationsDelayed.fire" decorationsService.ts
+grep -n "hasElementOrSubtree(key: K)" ternarySearchTree.ts
+grep -n "bubble\|provideDecorations" mainThreadDecorations.ts
+```
+
+`decorationsService.ts:326,347-359` (`getDecoration`, called by the generic `ResourceLabel`
+renderer used by both the built-in Explorer and any custom `TreeView` item that sets
+`resourceUri` — `labels.ts:689`):
+> ```ts
+> getDecoration(uri: URI, includeChildren: boolean): IDecoration | undefined {
+>     ...
+>     if (includeChildren) {
+>         // (resolved) children
+>         const iter = this._data.findSuperstr(uri);
+>         if (iter) {
+>             for (const tuple of iter) {
+>                 for (const data of tuple[1].values()) {
+>                     if (data && !(data instanceof DecorationDataRequest)) {
+>                         if (data.bubble) {
+>                             all.push(data);
+>                             containsChildren = true;
+>                         }
+>                     }
+>                 }
+> ```
+
+An ancestor's decoration is *computed*, not received: when a folder is rendered, the service scans
+its **own cache** (`this._data`, a `TernarySearchTree` keyed by every URI ever fetched) for entries
+strictly under that folder's URI (`findSuperstr`) and folds in any with `bubble === true`. There is
+no notion of "our extension's configured root" anywhere in this scan — it walks the literal
+filesystem path hierarchy as far as the cache has entries.
+
+`mainThreadDecorations.ts:99-106` — `bubble` is exactly the extension's `FileDecoration.propagate`,
+renamed at the bridge:
+> ```ts
+> const [bubble, tooltip, letter, themeColor] = data;
+> return {
+>     weight: 10,
+>     bubble: bubble ?? false,
+>     color: themeColor?.id,
+>     tooltip,
+>     letter
+> };
+> ```
+
+`decorationsService.ts:219-230` (`FileDecorationChangeEvent`) and `ternarySearchTree.ts:743-744`
+(`hasElementOrSubtree`), which decide whether a *rendered* resource must re-ask for its decoration
+after any provider fires an event:
+> ```ts
+> class FileDecorationChangeEvent implements IResourceDecorationChangeEvent {
+>     private readonly _data = TernarySearchTree.forUris<true>(_uri => true);
+>     constructor(all: URI | URI[]) { this._data.fill(true, asArray(all)); }
+>     affectsResource(uri: URI): boolean {
+>         return this._data.hasElementOrSubtree(uri);
+>     }
+> }
+> ```
+> ```ts
+> hasElementOrSubtree(key: K): boolean {
+>     return this._findSuperstrOrElement(key, true) !== undefined;
+> }
+> ```
+
+The change event is built from whatever URIs the *provider* fired (`all`). `affectsResource(x)` is
+true when `x` itself was fired, **or when a fired URI is a subtree element under `x`** — i.e. when
+`x` is an ancestor, on disk, of something that was fired. So a listener asking "does this affect
+*my* resource" (every currently-rendered `ResourceLabel`, `labels.ts:376`:
+`if (this.options.fileDecorations && e.affectsResource(resource)) { ... }`) gets `true` for **every
+ancestor folder of the fired URI**, not just the fired URI itself, with no bound at any "root".
+
+Finally, `decorationsService.ts:295-306` (the listener a provider's own registration installs on
+its `onDidChange`) shows firing the **descendant's own URI** is what refreshes that URI's cache
+entry in the first place:
+> ```ts
+> const listener = provider.onDidChange(uris => {
+>     if (!uris) {
+>         removeAll();
+>     } else {
+>         for (const uri of uris) {
+>             const map = this._ensureEntry(uri);
+>             this._fetchData(map, uri, provider);
+>         }
+>     }
+> });
+> ```
+and `_fetchData` → `_keepItem` (`decorationsService.ts:404-413`) re-fires the service's own change
+event for that same URI once the fetch resolves:
+> ```ts
+> private _keepItem(map: DecorationEntry, provider: IDecorationsProvider, uri: URI, data: IDecorationData | undefined): IDecorationData | null {
+>     const deco = data ? data : null;
+>     const old = map.get(provider);
+>     map.set(provider, deco);
+>     if (deco || old) {
+>         this._onDidChangeDecorationsDelayed.fire(uri);
+>     }
+>     return deco;
+> }
+> ```
+
+Следствие, and it changes what "signal the ancestors" can mean in code: firing
+`onDidChangeFileDecorations` for the **changed node's own URI** is what the platform needs — that
+alone (a) causes the service to refetch and cache that node's `bubble` flag, and (b) makes
+`affectsResource` return `true` for literally every one of its on-disk ancestors, however far up,
+whenever they are currently rendered somewhere (built-in Explorer included). The platform performs
+no clipping at a workspace or extension-defined "root": if the configured ProjectsTree root sits
+inside a larger open workspace, a `propagate: true` highlight **will** bubble into Explorer folders
+above that root — this is not preventable by choosing which URIs an `onDidChangeFileDecorations`
+call includes, because firing only the child already satisfies `affectsResource` for all of them.
+Decision taken on this fact (supersedes the brief's assumption of an explicit ancestor-URI
+signal): `HighlightDecorationProvider.update()` fires only the changed node's own URI, unconditionally
+(propagate or not) — no ancestor-URI list is computed or fired. An explicit ancestor signal was tried
+first and removed: it changed no observable platform behavior (the per-node signal already satisfies
+`affectsResource` for every ancestor) while making the decorations service query each ancestor URI and
+get back `undefined` for a `bubble` it had already learned about from the child fetch — exactly the
+no-observable-effect defect class round 06 flagged the first time this module carried an ancestor
+signal. Consequence accepted, not fixed: `propagate: true` has no root-scoped boundary at all, not
+even inside this module's own bookkeeping — VS Code's native bubble climbs the literal filesystem
+hierarchy with no notion of "our root," so a rule that opts into `propagate` can surface in built-in
+Explorer folders above the configured root when that root sits inside a larger open workspace. That
+gap is the same one fact 8 already named for undecorated bubbling and is inherited, not newly
+introduced, by making `propagate` a per-rule field; no API-level way to bound it exists at the 1.85
+floor or on `main`.
+
+Проверено повторно при своде этапа 04 (2026-09-04): те же команды против `main` на коммите
+`2e12155dfa05dfe3cd24e6624cb1489ac8a62907` воспроизводят цитаты дословно, номера строк не разошлись.
+
+## Пакет 04-A: открытие проекта и запуск процессов
+
+Планка `1.85.0`; локальная копия `vscode.d.ts` — `dts185.ts`, скачана
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts -o dts185.ts`.
+
+**63. `env.openExternal` принимает `Uri`, возвращает `Thenable<boolean>`.** Тип: цитата.
+Команда: `grep -n "export function openExternal" dts185.ts` → `10125`.
+`vscode.d.ts:10113-10125`:
+> «Opens a link externally using the default application. Depending on the
+> used scheme this can be:
+> * a browser (`http:`, `https:`)
+> * a mail client (`mailto:`)
+> * VSCode itself (`vscode:` from `vscode.env.uriScheme`)
+> …
+> @param target The uri that should be opened.
+> @returns A promise indicating if open was successful.»
+> «export function openExternal(target: Uri): Thenable<boolean>;»
+
+**64. `Uri.parse` принимает `strict`, документация советует всегда его передавать.** Тип: цитата.
+Команда: `grep -n "static parse" dts185.ts` → `1406`.
+`vscode.d.ts:1396-1406`:
+> «*Note* that for a while uris without a `scheme` were accepted. That is not correct
+> as all uris should have a scheme. To avoid breakage of existing code the optional
+> `strict`-argument has been added. We *strongly* advise to use it, e.g. `Uri.parse('my:uri', true)`»
+> «@param strict Throw an error when `value` is empty or when no `scheme` can be parsed.»
+> «static parse(value: string, strict?: boolean): Uri;»
+
+Следствие: `uri`-исполнитель строит `Uri.parse(rendered, true)`, не двухаргументный вызов без
+`strict` — шаблон без валидной схемы бросает исключение, а не молча даёт мусорный `Uri`.
+
+**65. `TerminalOptions.name`/`shellPath`/`cwd` — задокументированные поля, `cwd` принимает строку
+или `Uri`.** Тип: цитата. Команда: `grep -n "interface TerminalOptions" -A 20 dts185.ts` → `11699`.
+`vscode.d.ts:11699-11719`:
+> «export interface TerminalOptions {»
+> «A human-readable string which will be used to represent the terminal in the UI.» (`name?: string`)
+> «A path to a custom shell executable to be used in the terminal.» (`shellPath?: string`)
+> «A path or Uri for the current working directory to be used for the terminal.» (`cwd?: string | Uri`)
+
+**66. `createTerminal` есть в форме, принимающей `TerminalOptions` целиком.** Тип: цитата.
+Команда: `grep -n "export function createTerminal" dts185.ts` → `10895, 10904, 10913`.
+`vscode.d.ts:10904`:
+> «export function createTerminal(options: TerminalOptions): Terminal;»
+
+**67. `workspace.workspaceFile` — `undefined`, когда воркспейс не открыт как файл.** Тип: цитата.
+Команда: `grep -n "workspaceFile" dts185.ts` → `13057`.
+`vscode.d.ts:13035-13057`:
+> «Depending on the workspace that is opened, the value will be:
+> * `undefined` when no workspace is opened
+> * the path of the workspace file as `Uri` otherwise. if the workspace
+> is untitled, the returned URI will use the `untitled:` scheme»
+> «export const workspaceFile: Uri | undefined;»
+
+Следствие: `ActionRenderNode.workspaceFile` — `undefined`, не пустая строка, ровно когда открыта
+одна папка (или ничего) без `.code-workspace`; `render`'s `${workspaceFile}` уже трактует
+`undefined` как ошибку рендера (render.ts, `missingValue`) — это решение опирается именно на эту
+семантику, а не на предположение о ней.
+
+**68. `child_process` `'spawn'`-событие подтверждает успешный запуск, `'error'` — его отсутствие.**
+Тип: цитата (Node.js, не VS Code API). Источник: `nodejs/node@main doc/api/child_process.md`.
+Команда: `curl -s https://raw.githubusercontent.com/nodejs/node/main/doc/api/child_process.md -o cp.md && sed -n '1529,1541p;1597,1613p' cp.md`.
+> «The `'spawn'` event is emitted once the child process has spawned successfully.
+> If the child process does not spawn successfully, the `'spawn'` event is not
+> emitted and the `'error'` event is emitted instead.»
+> «The `'error'` event is emitted whenever:
+> * The process could not be spawned.
+> …»
+
+Следствие: `process`-исполнитель различает «команда не найдена в PATH» (ENOENT → `'error'`, ни разу
+`'spawn'`) от успешного запуска ровно по этим двум событиям — не по таймауту и не по коду выхода,
+которых при `stdio: 'ignore'`/`detached` не наблюдать надёжно.
+
+**69. `options.detached` + `subprocess.unref()` — задокументированный способ не ждать
+detached-процесс.** Тип: цитата (Node.js). Источник: тот же файл.
+Команда: `sed -n '921,941p;2306,2317p' cp.md`.
+> «On non-Windows platforms, if `options.detached` is set to `true`, the child
+> process will be made the leader of a new process group and session.»
+> «By default, the parent will wait for the detached child process to exit.
+> To prevent the parent process from waiting for a given `subprocess` to exit, use
+> the `subprocess.unref()` method.»
+
+Следствие: `.unref()` вызывается только после успешного `'spawn'` (факт 68) — до него процесс мог и
+не быть создан, `unref()` на несуществующем хендле бессмыслен, а слушатель `'error'` должен успеть
+быть навешан раньше, чем событийный цикл отпустит процесс.
+
+## Пакет 04-B: доверие воркспейса и remote
+
+Планка `1.85.0`, `vscode.d.ts` — тот же `dts185.ts`.
+
+**70. `workspace.isTrusted` — булево, true когда пользователь явно доверил воркспейсу.** Тип: цитата.
+`grep -n "isTrusted: boolean;" dts185.ts` → строка 13645, внутри `namespace workspace`:
+> «When true, the user has explicitly trusted the contents of the workspace.»
+> `export const isTrusted: boolean;`
+
+**71. `workspace.onDidGrantWorkspaceTrust` — событие, срабатывающее при получении доверия воркспейсом; без параметров, обратной подписки на отзыв доверия в рантайме нет.** Тип: цитата.
+`grep -n "onDidGrantWorkspaceTrust" dts185.ts` → строка 13649:
+> «Event that fires when the current workspace has been trusted.»
+> `export const onDidGrantWorkspaceTrust: Event<void>;`
+
+Следствие: гейт может обновить решение по `isTrusted` без перезагрузки окна, подписавшись на это
+событие — ровно то, что требует 04-B («без перезагрузки окна»). Отзыва доверия в рамках одной сессии
+API не предусматривает — окно перезапускается при переходе в Restricted Mode, поэтому обратного
+события нет и не нужно.
+
+**72. `env.remoteName` — `string | undefined`; `undefined` означает отсутствие remote extension host, значение — что текущий хост запущен как часть remote-сессии.** Тип: цитата.
+`grep -n "remoteName" dts185.ts` → строка 10097, внутри `namespace env`:
+> «The name of a remote. Defined by extensions, popular samples are `wsl` for the Windows Subsystem
+> for Linux or `ssh-remote` for remotes using a secure shell.»
+> «*Note* that the value is `undefined` when there is no remote extension host but that the value is
+> defined in all extension hosts (local and remote) in case a remote extension host exists.»
+> `export const remoteName: string | undefined;`
+
+Следствие: `remoteName !== undefined` — корректный признак «это окно работает через remote extension
+host». **Опровергнуто (review-07, R07-REMOTE-AUTHORITY):** `remoteName` сам по себе НЕ годится как
+ключ памяти подтверждения per-authority — цитата прямо называет значения ("`wsl`", "`ssh-remote`")
+«popular samples», то есть классом транспорта, определяемым расширением, а не идентификатором
+конкретной машины. Два разных SSH-сервера дают один и тот же `remoteName` ("ssh-remote"); ключ на
+его основе конфликтует их согласие. На планке 1.85 нет процитированной альтернативы,
+устанавливающей достоверный per-host идентификатор (см. попытку в `dts185.ts`: `Uri.authority`
+описан как общий компонент URI без remote-специфичной семантики, `workspace.workspaceFolders[].uri`
+несёт тот же нетипизированный `authority` для remote-схемы) — поэтому решение отказалось от
+персистентности согласия между сессиями вовсе (см. `trust.ts`).
+
+**73. `WorkspaceConfiguration.inspect()` на планке 1.85 не различает remote и локальный user settings — полей вида `globalRemoteValue` в возвращаемой форме нет.** Тип: цитата (полный список полей).
+`grep -n "inspect<T>" dts185.ts` → строка 6482; полный список полей результата (строки 6482-6524):
+> ```ts
+> inspect<T>(section: string): {
+>     key: string;
+>     defaultValue?: T;
+>     globalValue?: T;
+>     workspaceValue?: T;
+>     workspaceFolderValue?: T;
+>     defaultLanguageValue?: T;
+>     globalLanguageValue?: T;
+>     workspaceLanguageValue?: T;
+>     workspaceFolderLanguageValue?: T;
+>     languageIds?: string[];
+> } | undefined;
+> ```
+
+Следствие: поля ровно десять, и ни одно не называется `remote*`/`machine*`. `globalValue` — это и
+локальный user-settings, и remote-settings при `scope: machine` (факт 18 говорит, что `machine`
+пишется «только в user или только в remote settings» — то есть один физический файл в остальном
+неотличим от другого через эту форму). Источник значения, показываемый пользователю, поэтому не
+может утверждать «это пришло с удалённой машины» как факт API — только опираться на
+`env.remoteName !== undefined` (факт 72) в сочетании с тем, `globalValue` это или `defaultValue`.
+
+**74. `ExtensionContext.globalState` технически достаточен (синхронное чтение, `Thenable<void>` на
+запись, JSON-сериализуемое значение — факт 48) для запоминания булева флага по произвольному
+строковому ключу.** Тип: вывод. **Не используется для remote-согласия (review-07,
+R07-REMOTE-AUTHORITY):** техническая пригодность `globalState` как хранилища не отвечает на вопрос
+"каким ключом" — тем вопросом и была факт 72's ошибка. `remoteName` — единственный практический
+кандидат на такой ключ, и факт 72/86 показывают, что он не идентифицирует хост. Остаётся годным
+для другого builtin-состояния этого расширения, чей ключ не завязан на remote-identity.
+
+## Пакет 04-C: действия из дерева и Command Palette
+
+**75. `TreeView.selection` — синхронное, всегда доступное свойство `readonly T[]`.** Тип: цитата.
+`vscode.d.ts:11383-11387` на планке 1.85.0
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '11383,11387p'`):
+> «Currently selected elements.»
+> `readonly selection: readonly T[];`
+
+Следствие: `projectsTree.runAction`, invoked with no explicit node (a keybinding's `args` carries only
+what its author wrote — fact 29), reads `TreeView.selection` on both view ids
+(`extension.ts`'s composition root holds the `TreeView` instances) rather than needing any new
+platform API for "what's currently selected".
+
+**76. A command executed from a `TreeView` receives the invoking tree item as its first
+argument.** Тип: вывод. Посылка — `vscode.d.ts:11094-11097` (`TreeViewOptions.canSelectMany`'s own
+doc comment), на планке 1.85.0
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '11093,11098p'`):
+> «Whether the tree supports multi-select. When the tree supports multi-select and a command is
+> executed from the tree, the first argument to the command is the tree item that the command was
+> executed on and the second argument is an array containing all selected tree items.»
+
+The sentence documents the *multi-select* case explicitly ("first argument ... second argument"),
+not the single-select baseline by itself — so "a command invoked from the tree gets the tree item as
+its first argument" for a `view/item/context` command is an inference from this line, not a literal
+quote of it; the same status api-facts.md's own fact 20 already carries for an equally well-known
+platform behavior. Consequence for package 04-C: `projectsTree.openInNewWindow`,
+`.openInCurrentWindow` and `.showActions`, contributed on `view/item/context` for `viewItem ==
+project`, receive the clicked `ClassifiedNode` as their handler's first parameter without this
+package wiring anything extra — `NodeSelection.currentProjectNode()` (`commands/node-selection.ts`)
+is only the *fallback* for when a command is invoked some other way (keybinding, Command Palette).
+
+**77. `menus.commandPalette` with a `when` clause hides a contributed command from the Command
+Palette without un-registering it.** Тип: цитата. `vscode-docs/api/references/contribution-points.md:1129-1131`
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode-docs/main/api/references/contribution-points.md | sed -n '1129,1152p'`):
+> «When registering commands in `package.json`, they will automatically be shown in the **Command
+> Palette** (`kb(workbench.action.showCommands)`). To allow more control over command visibility,
+> there is the `commandPalette` menu item. It allows you to define a `when` condition to control if
+> a command should be visible in the **Command Palette** or not.»
+
+Consequence: `projectsTree.runPrimaryAction` and `projectsTree.runAction` — both meaningless without
+an argument no Command Palette invocation supplies (a `ClassifiedNode` / a keybinding's `args`) — are
+contributed (satisfying the manifest/code bidirectional check, `manifest-contract.test.ts`) but
+listed in `contributes.menus.commandPalette` with `"when": "false"`, matching this doc's own example
+shape verbatim.
+
+**78. `group` supports a `@<number>` suffix for order within a group.** Тип: цитата.
+`vscode-docs/api/references/contribution-points.md:1221` (`curl` + `grep -n`):
+> «The order inside a group depends on the title or an order-attribute. The group-local order of a
+> menu item is specified by appending `@<number>` to the group identifier as shown below:»
+
+Used for the three fixed `view/item/context` entries (`openInNewWindow`, `openInCurrentWindow`,
+`showActions`) so they render in that fixed order rather than whatever order the platform would
+otherwise pick within the shared `navigation` group.
+
+## Пакет 04-D: быстрый выбор проекта
+
+Планка `1.85.0`; источник — `https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts`,
+локальная копия `dts185.ts` побайтово идентична (`diff` подтверждён).
+
+**79. `window.withProgress` получает `CancellationToken` в колбэке, и только `ProgressLocation.Notification` умеет показывать кнопку отмены.** Тип: цитата.
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '10836,10861p'`:
+> «To monitor if the operation has been cancelled by the user, use the provided {@linkcode CancellationToken}.
+> Note that currently only `ProgressLocation.Notification` is supporting to show a cancel button to cancel the
+> long running operation.
+> …
+> export function withProgress<R>(options: ProgressOptions, task: (progress: Progress<{ … }>, token: CancellationToken) => Thenable<R>): Thenable<R>;»
+
+Следствие: сбор списка для «Open Project…» оборачивается в `withProgress({ location: Notification, cancellable: true }, (progress, token) => …)`, а не в свой модальный диалог — отмена приходит через `token`, а не через собственный UI.
+
+**80. `ProgressOptions.cancellable` включает кнопку отмены (только у `Notification`).** Тип: цитата.
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '12263,12288p'`:
+> «Controls if a cancel button should show to allow the user to
+> cancel the long running operation.  Note that currently only
+> `ProgressLocation.Notification` is supporting to show a cancel button.
+> cancellable?: boolean;»
+
+Следствие: без `location: ProgressLocation.Notification` кнопка отмены не показывается вовсе — обоснование, почему сбор списка нельзя показать прогрессом в статус-баре, если нужна отмена.
+
+**81. `CancellationToken.isCancellationRequested`/`onCancellationRequested` — единственный публичный интерфейс отмены платформы.** Тип: цитата.
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '1611,1621p'`:
+> «export interface CancellationToken {
+>   /** Is `true` when the token has been cancelled, `false` otherwise. */
+>   isCancellationRequested: boolean;
+>   /** An {@link Event} which fires upon cancellation. */
+>   onCancellationRequested: Event<any>;
+> }»
+
+Следствие: мост `vscode.CancellationToken` → core-порт `CancellationSource`/`CancellationSignal` (`src/projects/discovery/cancellation.ts`) — вызывать `.cancel()` на источнике из `onCancellationRequested`, а не передавать `vscode.CancellationToken` в core напрямую (core не импортирует `vscode`).
+
+**82. `QuickPickItem.description`/`.detail` — два независимых менее заметных поля строки; оба игнорируются для `kind: Separator`.** Тип: цитата.
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '1872,1884p'`:
+> «A human-readable string which is rendered less prominent in the same line. … description?: string;
+> A human-readable string which is rendered less prominent in a separate line. … detail?: string;»
+
+Следствие: элемент QuickPick «Open Project…» показывает и `description` (кратко), и `detail` (полный путь) — различимость двух одноимённых проектов в разных корнях не зависит от того, какое из двух полей выбрано.
+
+**83. `QuickPickOptions` (options bag of `window.showQuickPick`) has no `token`/cancellation field of its own.** Тип: цитата (отрицательный факт).
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '1923,1970p'` — `interface QuickPickOptions` lists `title`, `placeHolder`, `matchOnDescription`, `matchOnDetail`, `ignoreFocusOut`, `canPickMany`, `onDidSelectItem`; no `token` or cancellation-related member.
+
+Следствие: отмена сбора списка (счётчик вызовов `FileSystemReader`) не может опираться на `showQuickPick`'s собственные опции — список должен быть уже собран (или явно отменён) через `withProgress`'s `token`/`CancellationSource` ДО вызова `showQuickPick`, а не во время его показа.
+
+## Пакет 04-E: подтверждения и множественный выбор
+
+Планка `1.85.0`; копия `vscode.d.ts` — `dts185.ts`.
+
+**84. `MessageOptions.modal` существует и управляет модальностью `showWarningMessage`/
+`showInformationMessage`/`showErrorMessage`.** Тип: цитата. `vscode.d.ts:2095-2106`
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '2095,2106p'`):
+> ```ts
+> /**
+>  * Options to configure the behavior of the message.
+>  *
+>  * @see {@link window.showInformationMessage showInformationMessage}
+>  * @see {@link window.showWarningMessage showWarningMessage}
+>  * @see {@link window.showErrorMessage showErrorMessage}
+>  */
+> export interface MessageOptions {
+>
+> 	/**
+> 	 * Indicates that this message should be modal.
+> 	 */
+> 	modal?: boolean;
+> ```
+
+Следствие: решение 04-E использует `showWarningMessage(message, { modal: true }, confirm)` для
+подтверждения «Remove Root» — отказ пользователя не оставляет операцию в неопределённом состоянии
+(toast можно проигнорировать, модальное окно требует явного выбора), сама возможность подтверждена
+цитатой, а не предположением по аналогии с другими редакторами.
+
+**85. `QuickPickOptions.canPickMany` существует и переключает `showQuickPick` на множественный
+выбор.** Тип: цитата. `vscode.d.ts:1953-1954`
+(`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | sed -n '1949,1955p'`):
+> ```ts
+> /**
+>  * An optional flag to make the picker accept multiple selections, if true the result is an array of picks.
+>  */
+> canPickMany?: boolean;
+> ```
+
+Соответствующая перегрузка `showQuickPick` (`vscode.d.ts:10670`):
+> `export function showQuickPick<T extends QuickPickItem>(items: readonly T[] | Thenable<readonly T[]>, options: QuickPickOptions & { /** literal-type defines return type */ canPickMany: true }, token?: CancellationToken): Thenable<T[] | undefined>;`
+
+Следствие: «Manage Hidden…» (04-E) использует `canPickMany: true`, а не открывает `showQuickPick`
+по одному элементу за раз — несколько скрытых узлов возвращаются в дерево за один проход, и
+возврат типа (`T[] | undefined` вместо `T | undefined`) подтверждён самой перегрузкой, а не
+приведением типа вручную.
+
+Атомарность `rename(2)` в пределах одной файловой системы (используемая пакетом 04-E) — свойство
+POSIX/Node, а не VS Code API, и не подпадает под правило 1 этой таблицы («ничего об API редактора
+без цитаты в api-facts.md»). Пакет использует `node:fs/promises` напрямую в соседних модулях
+(`canonical-rules.ts`) без обоснования через эту таблицу — тот же прецедент.
+
+**86. На планке 1.85 нет публичного API-члена, документированного как идентификатор конкретного
+remote-authority (per-host), отдельного от `env.remoteName`'s транспортного класса.** Тип: цитата
+(отрицательный факт).
+`curl -s https://raw.githubusercontent.com/microsoft/vscode/1.85.0/src/vscode-dts/vscode.d.ts | grep -n "authority"`:
+> ```
+> 1470:   readonly authority?: string;
+> 1500:   readonly authority: string;
+> ```
+Оба относятся к `Uri`/`Uri.from`'s общей форме, с доком:
+> «Authority is the `www.example.com` part of `http://www.example.com/some/path?query#fragment`.
+> The part between the first double slashes and the next slash.»
+Это описание общего компонента URI — ни слова про remote-схему (`vscode-remote://…`) или про то,
+что `authority` там кодирует конкретный хост стабильно между сессиями. `WorkspaceFolder` (строки
+12948-12966) документирует только `uri`/`name`/`index`, тем же общим `Uri`, без remote-специфики.
+
+Следствие: решение по R07-REMOTE-AUTHORITY не может опереться на `workspaceFolders[].uri.authority`
+или любой другой `Uri.authority` как на документированный per-host идентификатор — использование
+такого значения для ключа согласия было бы выводом из недокументированного внутреннего формата
+(`vscode-remote` — формат схемы сторонних Remote-расширений, не части `vscode.d.ts`), запрещённым
+этим же правилом («ничего об API редактора без цитаты в api-facts.md»). `WorkspaceExecutionGate`
+поэтому не персистирует согласие между сессиями вовсе — см. `trust.ts`.
+
 ## Опровергнутые утверждения предыдущих ревизий
 
 Секция ведётся намеренно: план однажды уже построил на каждом из них решение.
@@ -1060,3 +1531,4 @@ view, а не остаётся пустой рамкой. Явно провер�
 | «`ThemeColor.id` доступен на планке 1.85» | round 04 (факт 43) | Класс на 1.85 объявляет только конструктор; `readonly id` появляется позже. Вердикт о доступности был снят грепом по конструктору, а опиралось решение на свойство |
 | «Платформа не отвергает коллизию view id — различие id это соглашение» | round 04 (факт 5) | `viewsExtensionPoint.ts:473-480`: две проверки и `collector.error` на дубликат, локально и против глобального реестра |
 | «Кастомный контейнер `viewsContainers.activitybar` оставляет пустую иконку в Activity Bar, когда его единственный view скрыт `when`» | round 04 (claim к 03-C) | Факт 47: `hideIfEmpty: true` зашит безусловно для всех расширений в `registerCustomViewContainer`, и пересчёт реактивен — иконка гаснет вместе с view |
+| «`env.remoteName` годится как ключ памяти подтверждения per-authority» | review-07 (R07-REMOTE-AUTHORITY, факт 72) | Факт 72's собственная цитата называет значения "popular samples" транспортного класса (`wsl`, `ssh-remote`), не идентификатором хоста; факт 86: на 1.85 нет документированной альтернативы для per-host идентификации |

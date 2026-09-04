@@ -8,9 +8,15 @@ decision); never to conform it to already-written code or to drop an inconvenien
 ## Layout
 
 Current: `extension.ts` plus `projects/{classification,discovery,actions}/` (the core) and
-`editor/{tree-view,decorations,commands,configuration}/` (the VS Code adapter). Integration tests
-live outside `src/`, in `packages/projects-tree/test/integration/`. Still absent from the target
-layout below: `editor/onboarding/` (stage 05) and `editor/rules-editor/` (stage 06).
+`editor/{tree-view,decorations,commands,configuration,context-keys,rules}/` (the VS Code adapter).
+Two of those are not in the target layout below and are named here instead of being discovered by
+reading the tree: `editor/context-keys/` (the `when`-clause keys this extension sets) and
+`editor/rules/` (reading and writing the canonical rules file on disk — the adapter half of
+`projects/classification/rules-file.ts`, which may not touch the filesystem). Inside
+`editor/commands/`, `actions/` holds the execution engine (runner, registry, one executor per
+`ActionSpec` kind) while the files beside it register commands by id. Integration tests live
+outside `src/`, in `packages/projects-tree/test/integration/`. Still absent from the target layout
+below: `editor/onboarding/` (stage 05) and `editor/rules-editor/` (stage 06).
 
 Target layout, introduced incrementally by `docs/plans/projects-tree/02-core.md` and
 `03-tree-view.md` (do not create these directories ahead of the stage that introduces them):
