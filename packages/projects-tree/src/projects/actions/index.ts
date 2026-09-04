@@ -10,6 +10,7 @@ export type {
   ShellKind,
 } from './action';
 export { RenderError } from './action';
+export { BUILT_IN_ACTIONS, DEFAULT_ACTION_ID } from './builtin';
 export type { ActionRenderNode } from './render';
 export { render, renderArgs, renderCommandArgs } from './render';
 export { encodeForUri, quoteForShell } from './quoting';
